@@ -1,10 +1,8 @@
-// HostDashboard.jsx — Phase 5A
-// Two-column live dashboard.
-// Left:  SessionHeader + ParticipantGrid + SentimentTimeline
-// Right: AlertFeed
-// Optional debug panel: append ?debug=1 to URL
-
+// HostDashboard.jsx — Phase 5A / emoji-free (Phase 5A.1)
+// All emojis replaced with Lucide icons.
 import { useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
+import { Home, Bug } from 'lucide-react';
 import { useMeetingSocket }  from '../hooks/useMeetingSocket';
 import SessionHeader        from '../components/SessionHeader';
 import ParticipantGrid      from '../components/ParticipantGrid';
@@ -24,8 +22,11 @@ export default function HostDashboard() {
 
   if (!sessionId) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-slate-400">
-        No session ID. <a href="/" className="ml-2 text-brand underline">Go home</a>
+      <div className="min-h-screen flex items-center justify-center text-slate-400 gap-2">
+        No session ID.
+        <Link to="/" className="flex items-center gap-1 text-brand underline">
+          <Home size={14} /> Go home
+        </Link>
       </div>
     );
   }
@@ -33,9 +34,9 @@ export default function HostDashboard() {
   if (sessionError) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-3 text-slate-400">
-        <span className="text-3xl">🚫</span>
+        <Home size={40} className="text-slate-600" />
         <p className="text-white">{sessionError}</p>
-        <a href="/" className="text-brand underline text-sm">Back to home</a>
+        <Link to="/" className="text-brand underline text-sm">Back to home</Link>
       </div>
     );
   }
@@ -66,7 +67,9 @@ export default function HostDashboard() {
           {/* Optional debug panel — ?debug=1 */}
           {debug && (
             <section className="mt-2 p-3 rounded-xl bg-white/5 border border-white/10">
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Debug</p>
+              <p className="flex items-center gap-1.5 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                <Bug size={13} /> Debug
+              </p>
               <p className="text-xs text-slate-300">Session: <span className="font-mono text-white">{sessionId}</span></p>
               <p className="text-xs text-slate-300">Connected: <span className="text-white">{connected ? 'yes' : 'no'}</span></p>
               <p className="text-xs text-slate-300">Participants: <span className="text-white">{participants.length}</span></p>

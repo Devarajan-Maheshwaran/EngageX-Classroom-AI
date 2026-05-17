@@ -1,22 +1,20 @@
-// ParticipantJoin.jsx — Phase 5A
-// Simple join form → minimal chat UI + 4 quick reaction buttons.
-// Reaction buttons send a natural-language phrase so the AI pipeline
-// classifies them as real intent (not synthetic triggers).
-
+// ParticipantJoin.jsx — Phase 5A / emoji-free (Phase 5A.1)
+// All emojis replaced with Lucide icons.
 import { useState, useRef, useEffect } from 'react';
+import { HelpCircle, CheckCircle, Zap, Moon, Send, Ban, ArrowLeft } from 'lucide-react';
 import { useMeetingSocket } from '../hooks/useMeetingSocket';
 
 const REACTIONS = [
-  { label: 'Confused 😕',  text: "I'm really confused about this right now." },
-  { label: 'Got it ✅',    text: "I understand this, it's clear to me." },
-  { label: 'Excited 🚀',  text: "This is really exciting and interesting!" },
-  { label: 'Lost 😴',     text: "I'm lost and not following along anymore." },
+  { Icon: HelpCircle, label: 'Confused',  text: "I'm really confused about this right now.",  color: 'text-rose-400'    },
+  { Icon: CheckCircle,label: 'Got it',    text: "I understand this, it's clear to me.",         color: 'text-emerald-400' },
+  { Icon: Zap,        label: 'Excited',   text: "This is really exciting and interesting!",      color: 'text-yellow-400'  },
+  { Icon: Moon,       label: 'Lost',      text: "I'm lost and not following along anymore.",     color: 'text-slate-400'   },
 ];
 
 function JoinForm({ onJoin }) {
-  const [name, setName]         = useState('');
-  const [code, setCode]         = useState('');
-  const [error, setError]       = useState('');
+  const [name, setName]   = useState('');
+  const [code, setCode]   = useState('');
+  const [error, setError] = useState('');
 
   function handleSubmit(e) {
     e.preventDefault();
@@ -56,10 +54,7 @@ function JoinForm({ onJoin }) {
             />
           </div>
           {error && <p className="text-rose-400 text-xs">{error}</p>}
-          <button
-            type="submit"
-            className="w-full py-3 rounded-xl bg-brand text-white font-semibold hover:opacity-90 transition-opacity"
-          >
+          <button type="submit" className="w-full py-3 rounded-xl bg-brand text-white font-semibold hover:opacity-90 transition-opacity">
             Join session
           </button>
         </form>
@@ -69,10 +64,7 @@ function JoinForm({ onJoin }) {
 }
 
 function SessionRoom({ sessionId, name }) {
-  const { sendMessage, sessionError, connected } = useMeetingSocket({
-    role: 'student', sessionId, name,
-  });
-
+  const { sendMessage, sessionError, connected } = useMeetingSocket({ role: 'student', sessionId, name });
   const [text, setText]     = useState('');
   const [messages, setMsgs] = useState([]);
   const bottomRef           = useRef(null);
@@ -92,16 +84,17 @@ function SessionRoom({ sessionId, name }) {
   if (sessionError) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-3 text-slate-400">
-        <span className="text-3xl">🚫</span>
+        <Ban size={40} className="text-slate-600" />
         <p className="text-white">{sessionError}</p>
-        <a href="/join" className="text-brand underline text-sm">Rejoin</a>
+        <a href="/join" className="flex items-center gap-1 text-brand underline text-sm">
+          <ArrowLeft size={13} /> Rejoin
+        </a>
       </div>
     );
   }
 
   return (
     <div className="min-h-screen flex flex-col bg-bg">
-      {/* Header */}
       <header className="flex items-center justify-between px-5 py-3 bg-surface border-b border-border">
         <div>
           <span className="text-white font-semibold">Session </span>
@@ -109,7 +102,7 @@ function SessionRoom({ sessionId, name }) {
         </div>
         <div className="flex items-center gap-1.5 text-xs text-slate-400">
           <span className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-400' : 'bg-rose-400'}`} />
-          {connected ? `Connected as ${name}` : 'Reconnecting…'}
+          {connected ? `Connected as ${name}` : 'Reconnecting...'}
         </div>
       </header>
 
@@ -119,8 +112,9 @@ function SessionRoom({ sessionId, name }) {
           <button
             key={r.label}
             onClick={() => send(r.text)}
-            className="px-3 py-1.5 rounded-full text-sm bg-white/5 border border-border text-slate-300 hover:bg-white/10 hover:text-white transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm bg-white/5 border border-border text-slate-300 hover:bg-white/10 hover:text-white transition-colors"
           >
+            <r.Icon size={14} className={r.color} />
             {r.label}
           </button>
         ))}
@@ -146,15 +140,15 @@ function SessionRoom({ sessionId, name }) {
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && send(text)}
-            placeholder="Type a message…"
+            placeholder="Type a message..."
             maxLength={500}
             className="flex-1 bg-surface border border-border rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-brand"
           />
           <button
             onClick={() => send(text)}
-            className="px-5 py-3 rounded-xl bg-brand text-white font-medium hover:opacity-90 transition-opacity"
+            className="flex items-center gap-1.5 px-5 py-3 rounded-xl bg-brand text-white font-medium hover:opacity-90 transition-opacity"
           >
-            Send
+            <Send size={15} /> Send
           </button>
         </div>
       </div>

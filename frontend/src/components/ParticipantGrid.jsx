@@ -1,25 +1,13 @@
-// ParticipantGrid.jsx — Phase 5A
-// Meet-style participant tiles.
-// New in 5A:
-//   • Live intent badge per tile (emoji from lastIntentLabel, Phase 3A)
-//   • Score ring colour: green ≥ 70, yellow ≥ 40, red < 40
-//   • Silent indicator: shows duration if > 60s
-//   • "last spoken" dot: blue if messageCount > 0 in session
+// ParticipantGrid.jsx — Phase 5A / emoji-free (Phase 5A.1)
+// Lucide icons replace all intent emojis.
+import { HelpCircle, Frown, Zap, CheckCircle, Moon, MessageSquare, Clock } from 'lucide-react';
 
-const INTENT_EMOJI = {
-  confused:   '😕',
-  frustrated: '😤',
-  excited:    '🚀',
-  engaged:    '✅',
-  bored:      '😴',
-};
-
-const INTENT_COLOR = {
-  confused:   'text-rose-400',
-  frustrated: 'text-orange-400',
-  excited:    'text-emerald-400',
-  engaged:    'text-blue-400',
-  bored:      'text-slate-400',
+const INTENT_ICON = {
+  confused:   { Icon: HelpCircle, color: 'text-rose-400'   },
+  frustrated: { Icon: Frown,       color: 'text-orange-400' },
+  excited:    { Icon: Zap,         color: 'text-emerald-400'},
+  engaged:    { Icon: CheckCircle, color: 'text-blue-400'   },
+  bored:      { Icon: Moon,        color: 'text-slate-400'  },
 };
 
 function scoreRing(score) {
@@ -30,22 +18,17 @@ function scoreRing(score) {
 
 function formatSilent(ms) {
   if (ms < 60000) return null;
-  const mins = Math.floor(ms / 60000);
-  return `${mins}m silent`;
+  return `${Math.floor(ms / 60000)}m silent`;
 }
 
 function initials(name) {
-  return name
-    .split(' ')
-    .map((w) => w[0]?.toUpperCase() || '')
-    .slice(0, 2)
-    .join('');
+  return name.split(' ').map((w) => w[0]?.toUpperCase() || '').slice(0, 2).join('');
 }
 
 function ParticipantTile({ p }) {
   const intent    = p.lastIntentLabel || 'engaged';
-  const emoji     = INTENT_EMOJI[intent]  || '✅';
-  const intentClr = INTENT_COLOR[intent]  || 'text-blue-400';
+  const cfg       = INTENT_ICON[intent] || INTENT_ICON.engaged;
+  const IntentIcon = cfg.Icon;
   const ring      = scoreRing(p.participationScore ?? 100);
   const silentStr = formatSilent(p.silentDurationMs || 0);
 
@@ -56,31 +39,30 @@ function ParticipantTile({ p }) {
         {initials(p.name)}
       </div>
 
-      {/* Intent badge — top-right corner */}
-      <span
-        className={`absolute top-2 right-2 text-base ${intentClr}`}
-        title={intent}
-      >
-        {emoji}
+      {/* Intent icon — top-right corner */}
+      <span className={`absolute top-2 right-2 ${cfg.color}`} title={intent}>
+        <IntentIcon size={15} />
       </span>
 
       {/* Name */}
       <span className="text-sm font-medium text-white truncate max-w-full">{p.name}</span>
 
-      {/* Score + message count row */}
+      {/* Score + message count */}
       <div className="flex items-center gap-2 text-xs text-slate-400">
         <span>{p.participationScore ?? 100}pts</span>
         {p.messageCount > 0 && (
           <span className="flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-            {p.messageCount} msg{p.messageCount !== 1 ? 's' : ''}
+            <MessageSquare size={10} className="text-blue-400" />
+            {p.messageCount}
           </span>
         )}
       </div>
 
       {/* Silent warning */}
       {silentStr && (
-        <span className="text-xs text-rose-400 font-medium">{silentStr}</span>
+        <span className="flex items-center gap-1 text-xs text-rose-400 font-medium">
+          <Clock size={11} /> {silentStr}
+        </span>
       )}
     </div>
   );
@@ -90,8 +72,8 @@ export default function ParticipantGrid({ participants }) {
   if (!participants.length) {
     return (
       <div className="flex flex-col items-center justify-center h-48 text-slate-500 gap-2">
-        <span className="text-3xl">👥</span>
-        <p className="text-sm">Waiting for participants to join…</p>
+        <Users size={32} className="text-slate-600" />
+        <p className="text-sm">Waiting for participants to join...</p>
         <p className="text-xs">Share the session code above</p>
       </div>
     );
@@ -99,9 +81,7 @@ export default function ParticipantGrid({ participants }) {
 
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-      {participants.map((p) => (
-        <ParticipantTile key={p.studentId} p={p} />
-      ))}
+      {participants.map((p) => <ParticipantTile key={p.studentId} p={p} />)}
     </div>
   );
 }

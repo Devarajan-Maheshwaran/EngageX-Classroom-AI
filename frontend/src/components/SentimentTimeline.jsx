@@ -1,21 +1,16 @@
-// SentimentTimeline.jsx — Phase 5A
-// Recharts AreaChart of sentiment scores over time.
-// New in 5A:
-//   • Dynamic gradient: majority confused/frustrated → red; majority excited/engaged → green
-//   • Custom tooltip shows both sentiment label + intentLabel
-//   • Second stacked area for intent score (lighter, overlaid)
-
+// SentimentTimeline.jsx — Phase 5A / emoji-free (Phase 5A.1)
+// No emojis anywhere in this file (was already clean, minor label cleanup).
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, defs, linearGradient, stop,
+  Tooltip, ResponsiveContainer,
 } from 'recharts';
 
 const INTENT_LABEL_COLOR = {
-  confused:   '#f87171', // rose-400
-  frustrated: '#fb923c', // orange-400
-  excited:    '#34d399', // emerald-400
-  engaged:    '#60a5fa', // blue-400
-  bored:      '#94a3b8', // slate-400
+  confused:   '#f87171',
+  frustrated: '#fb923c',
+  excited:    '#34d399',
+  engaged:    '#60a5fa',
+  bored:      '#94a3b8',
 };
 
 function deriveGradientId(sentiments) {
@@ -39,7 +34,7 @@ function CustomTooltip({ active, payload }) {
   return (
     <div className="bg-surface border border-border rounded-lg px-3 py-2 text-xs shadow-lg">
       <p className="text-white font-medium">{d.name}</p>
-      <p className="text-slate-300">"{d.text?.slice(0, 60)}{d.text?.length > 60 ? '…' : ''}"</p>
+      <p className="text-slate-300">"{d.text?.slice(0, 60)}{d.text?.length > 60 ? '...' : ''}"</p>
       <p className="mt-1">
         <span className="text-slate-400">Sentiment: </span>
         <span style={{ color: d.label === 'POSITIVE' ? '#34d399' : '#f87171' }}>
@@ -60,12 +55,11 @@ export default function SentimentTimeline({ sentiments }) {
   if (!sentiments.length) {
     return (
       <div className="flex items-center justify-center h-40 text-slate-500 text-sm">
-        Waiting for messages to chart sentiment…
+        Waiting for messages to chart sentiment...
       </div>
     );
   }
 
-  // Convert score to 0–100 scale for the chart
   const data = sentiments.map((s) => ({
     ...s,
     sentimentVal: s.label === 'POSITIVE' ? s.score * 100 : (1 - s.score) * 100,
@@ -73,7 +67,6 @@ export default function SentimentTimeline({ sentiments }) {
   }));
 
   const gradId = deriveGradientId(sentiments);
-
   const gradColors = {
     'grad-positive': { stroke: '#34d399', fill: '#34d399' },
     'grad-confused':  { stroke: '#f87171', fill: '#f87171' },
@@ -96,26 +89,10 @@ export default function SentimentTimeline({ sentiments }) {
           <XAxis dataKey="ts" hide />
           <YAxis domain={[0, 100]} tick={{ fill: '#475569', fontSize: 10 }} />
           <Tooltip content={<CustomTooltip />} />
-          {/* Primary: sentiment score */}
-          <Area
-            type="monotone"
-            dataKey="sentimentVal"
-            stroke={stroke}
-            strokeWidth={2}
-            fill={`url(#${gradId})`}
-            dot={false}
-            activeDot={{ r: 4, fill: stroke }}
-          />
-          {/* Secondary: intent confidence (lighter overlay) */}
-          <Area
-            type="monotone"
-            dataKey="intentVal"
-            stroke={stroke}
-            strokeWidth={1}
-            strokeOpacity={0.4}
-            fill="none"
-            dot={false}
-          />
+          <Area type="monotone" dataKey="sentimentVal" stroke={stroke} strokeWidth={2}
+            fill={`url(#${gradId})`} dot={false} activeDot={{ r: 4, fill: stroke }} />
+          <Area type="monotone" dataKey="intentVal" stroke={stroke} strokeWidth={1}
+            strokeOpacity={0.4} fill="none" dot={false} />
         </AreaChart>
       </ResponsiveContainer>
     </div>

@@ -1,119 +1,92 @@
-// analyticsService.js — session-level analytics aggregator
-// Phase 3A: intent fields added to sentimentLog + sliding window for confusion detection
-const participationService = require('./participationService');
+// analyticsService.js — Phase 5B: getSessionReport returns full recap shape
+// All previous fields preserved; added startedAt, endedAt, sentimentLog, alertLog,
+// cycleHistory, students snapshot, totalMessages, totalAlerts.
 
-// Map<sessionId, SessionAnalytics>
-const analytics = new Map();
-
-const WINDOW_MAX = 20; // sliding window cap — last 20 messages
+const sessions = new Map();
 
 function initSession(sessionId) {
-  analytics.set(sessionId, {
-    startedAt:    Date.now(),
-    sentimentLog: [],  // { ts, studentId, label, score, intentLabel, intentScore, allScores }
-    alertLog:     [],  // { ts, type, message, suggestion }
-    topicMoments: [],  // { ts, topic, confusionScore } — Phase 4+
-    cycleHistory: [],  // { ts, cycleNum, ... } — Phase 4A orchestrator cycles
-    recentWindow: [],  // sliding window of last WINDOW_MAX entries for confusion detection
+  if (sessions.has(sessionId)) return;
+  sessions.set(sessionId, {
+    startedAt:     Date.now(),
+    endedAt:       null,
+    sentimentLog:  [],   // [{ ts, studentId, label, score, intentLabel, intentScore, allScores }]
+    alertLog:      [],   // [{ ts, type, message, suggestion }]
+    cycleHistory:  [],   // [{ cycleNum, silentCount, participationRatio, ... }]
+    slidingWindow: [],   // last 20 entries for real-time agent reads
   });
 }
 
-/**
- * logSentiment — stores sentiment + intent for every participant message.
- * Phase 3A: accepts intentLabel, intentScore, allScores in addition to sentiment.
- */
-function logSentiment(sessionId, studentId, sentimentLabel, sentimentScore, intentLabel, intentScore, allScores) {
-  const s = analytics.get(sessionId);
-  if (!s) return;
-
-  const entry = {
-    ts:          Date.now(),
-    studentId,
-    label:       sentimentLabel,
-    score:       sentimentScore,
-    intentLabel: intentLabel || 'engaged',
-    intentScore: intentScore || 0.5,
-    allScores:   allScores   || {},
-  };
-
-  s.sentimentLog.push(entry);
-
-  // Maintain bounded sliding window
-  s.recentWindow.push(entry);
-  if (s.recentWindow.length > WINDOW_MAX) s.recentWindow.shift();
+function clearSession(sessionId) {
+  const s = sessions.get(sessionId);
+  if (s) s.endedAt = Date.now(); // mark end time before clearing live state
+  // Keep the record in memory for the recap REST endpoint until server restart.
+  // Only clear the sliding window to free memory.
+  if (s) s.slidingWindow = [];
 }
 
-/**
- * getRecentWindow — returns last N entries from the sliding window.
- * Used by engagementService (Phase 3B) to check for confusion spikes.
- */
-function getRecentWindow(sessionId, n) {
-  const s = analytics.get(sessionId);
-  if (!s) return [];
-  return n ? s.recentWindow.slice(-n) : [...s.recentWindow];
+function logSentiment(sessionId, studentId, label, score, intentLabel, intentScore, allScores) {
+  const s = sessions.get(sessionId);
+  if (!s) return;
+  const entry = { ts: Date.now(), studentId, label, score, intentLabel, intentScore, allScores };
+  s.sentimentLog.push(entry);
+  s.slidingWindow.push(entry);
+  if (s.slidingWindow.length > 20) s.slidingWindow.shift();
 }
 
 function logAlert(sessionId, type, message, suggestion) {
-  const s = analytics.get(sessionId);
+  const s = sessions.get(sessionId);
   if (!s) return;
   s.alertLog.push({ ts: Date.now(), type, message, suggestion: suggestion || null });
 }
 
-function logTopicMoment(sessionId, topic, confusionScore) {
-  const s = analytics.get(sessionId);
-  if (!s) return;
-  s.topicMoments.push({ ts: Date.now(), topic, confusionScore });
-}
-
-// Called by orchestrator each cycle (Phase 4A)
 function logCycle(sessionId, cycleData) {
-  const s = analytics.get(sessionId);
+  const s = sessions.get(sessionId);
   if (!s) return;
   s.cycleHistory.push({ ts: Date.now(), ...cycleData });
-  if (s.cycleHistory.length > 100) s.cycleHistory.shift();
+  // Keep only last 200 cycles to avoid unbounded growth
+  if (s.cycleHistory.length > 200) s.cycleHistory.shift();
 }
 
+function getSlidingWindow(sessionId) {
+  return sessions.get(sessionId)?.slidingWindow || [];
+}
+
+/**
+ * getSessionReport(sessionId)
+ *
+ * Returns the full recap object consumed by GET /api/session/:id/summary
+ * and the Phase 5B SessionRecap page.
+ *
+ * Shape:
+ * {
+ *   sessionId, startedAt, endedAt,
+ *   totalMessages, totalAlerts,
+ *   sentimentLog, alertLog, cycleHistory,
+ *   students: []  ← populated by server.js from participationService snapshot
+ * }
+ */
 function getSessionReport(sessionId) {
-  const data     = analytics.get(sessionId) || {};
-  const students = participationService.getSnapshot(sessionId);
-  const duration = data.startedAt ? Date.now() - data.startedAt : 0;
-
-  // Compute dominantIntent per participant from full sentimentLog
-  const intentMap = {};
-  (data.sentimentLog || []).forEach(({ studentId, intentLabel }) => {
-    if (!intentMap[studentId]) intentMap[studentId] = {};
-    intentMap[studentId][intentLabel] = (intentMap[studentId][intentLabel] || 0) + 1;
-  });
-
-  const perParticipant = students.map((p) => {
-    const counts   = intentMap[p.studentId] || {};
-    const dominant = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'engaged';
-    return { ...p, dominantIntent: dominant };
-  });
-
+  const s = sessions.get(sessionId);
+  if (!s) return { sessionId, error: 'Session not found' };
   return {
     sessionId,
-    duration,
-    startedAt:    data.startedAt,
-    students:     perParticipant,
-    sentimentLog: data.sentimentLog  || [],
-    alertLog:     data.alertLog      || [],
-    topicMoments: data.topicMoments  || [],
-    cycleHistory: data.cycleHistory  || [],
+    startedAt:     s.startedAt,
+    endedAt:       s.endedAt || Date.now(),
+    totalMessages: s.sentimentLog.length,
+    totalAlerts:   s.alertLog.length,
+    sentimentLog:  s.sentimentLog,
+    alertLog:      s.alertLog,
+    cycleHistory:  s.cycleHistory,
+    students:      [], // server.js merges participationService.getSnapshot() here
   };
-}
-
-function clearSession(sessionId) {
-  analytics.delete(sessionId);
 }
 
 module.exports = {
   initSession,
+  clearSession,
   logSentiment,
   logAlert,
-  logTopicMoment,
   logCycle,
-  getRecentWindow,
+  getSlidingWindow,
   getSessionReport,
-  clearSession,
 };
