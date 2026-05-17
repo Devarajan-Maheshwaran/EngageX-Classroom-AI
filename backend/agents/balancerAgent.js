@@ -1,42 +1,49 @@
-// balancerAgent.js — detects participation imbalance in the room
+// balancerAgent.js — Phase 4A: pure function, no internal timers
+//
+// The orchestrator calls runCycle(sessionId) on every N-th master cycle
+// (balancer runs less frequently than the monitor — see orchestrator config).
+// This file owns ONLY the participation-ratio logic.
+
 const bus                  = require('../services/eventBus');
 const participationService = require('../services/participationService');
-const analyticsService     = require('../services/analyticsService');
 
-const IMBALANCE_THRESHOLD = 0.35;   // < 35% of room spoken → alert
-const MIN_ROOM_SIZE       = 3;      // don't alert for tiny 1-2 person rooms
-const MIN_MESSAGES_TOTAL  = 3;      // wait for some signal before flagging
-const CHECK_INTERVAL_MS   = 90 * 1000;
+const IMBALANCE_THRESHOLD = parseFloat(process.env.IMBALANCE_THRESHOLD || '0.35');
+const MIN_ROOM_SIZE       = parseInt(process.env.MIN_ROOM_SIZE         || '2',   10);
+const MIN_MESSAGES_TOTAL  = 3;
 
-const timers = new Map();
+/**
+ * runCycle(sessionId)
+ *
+ * Checks participation ratio. Fires PARTICIPATION_IMBALANCE if < IMBALANCE_THRESHOLD
+ * of the room has spoken and there are enough participants + messages to be meaningful.
+ *
+ * @param {string} sessionId
+ * @returns {{ ratio: number, triggered: boolean }}
+ */
+function runCycle(sessionId) {
+  const all = participationService.getSnapshot(sessionId);
 
-function start(sessionId) {
-  if (timers.has(sessionId)) return;
-  const id = setInterval(() => {
-    const all = participationService.getSnapshot(sessionId);
-    if (all.length < MIN_ROOM_SIZE) return;
+  if (all.length < MIN_ROOM_SIZE) return { ratio: 1, triggered: false };
 
-    const totalMessages = all.reduce((acc, p) => acc + p.messageCount, 0);
-    if (totalMessages < MIN_MESSAGES_TOTAL) return;
+  const totalMessages = all.reduce((sum, p) => sum + p.messageCount, 0);
+  if (totalMessages < MIN_MESSAGES_TOTAL) return { ratio: 1, triggered: false };
 
-    const active  = all.filter((p) => p.messageCount > 0);
-    const ratio   = active.length / all.length;
-    if (ratio >= IMBALANCE_THRESHOLD) return;
+  const active  = all.filter((p) => p.messageCount > 0);
+  const ratio   = active.length / all.length;
 
-    const silent  = all.filter((p) => p.messageCount === 0).map((p) => p.name);
-    const preview = silent.slice(0, 5).join(', ') + (silent.length > 5 ? ` +${silent.length - 5} more` : '');
-    const msg     = `Only ${active.length}/${all.length} participants have spoken. Silent: ${preview}`;
-    const payload = { sessionId, type: 'PARTICIPATION_IMBALANCE', ratio, message: msg };
+  if (ratio >= IMBALANCE_THRESHOLD) return { ratio, triggered: false };
 
-    bus.publish(bus.EVENTS.ENGAGEMENT_ALERT, payload);
-    analyticsService.logAlert(sessionId, 'PARTICIPATION_IMBALANCE', msg);
-  }, CHECK_INTERVAL_MS);
-  timers.set(sessionId, id);
+  const silent  = all.filter((p) => p.messageCount === 0).map((p) => p.name);
+  const preview = silent.slice(0, 5).join(', ') + (silent.length > 5 ? ` +${silent.length - 5} more` : '');
+
+  bus.publish(bus.EVENTS.ENGAGEMENT_ALERT, {
+    sessionId,
+    type:    'PARTICIPATION_IMBALANCE',
+    ratio,
+    message: `Only ${active.length}/${all.length} participants have spoken. Silent: ${preview}`,
+  });
+
+  return { ratio, triggered: true };
 }
 
-function stop(sessionId) {
-  const id = timers.get(sessionId);
-  if (id) { clearInterval(id); timers.delete(sessionId); }
-}
-
-module.exports = { start, stop };
+module.exports = { runCycle, IMBALANCE_THRESHOLD };
