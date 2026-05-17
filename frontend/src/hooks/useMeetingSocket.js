@@ -23,51 +23,48 @@ export function useMeetingSocket({ role, sessionId, name }) {
     socket.on('connect',    () => setConnected(true));
     socket.on('disconnect', () => setConnected(false));
 
-    // Host listeners
-    socket.on('room:state', ({ students }) => {
-      setParticipants(students || []);
+    // Full snapshot every 10s
+    socket.on('room:state', ({ students }) => setParticipants(students || []));
+
+    // Agent alerts (with suggestion attached by mentorAgent)
+    socket.on('engagement:alert', (alert) =>
+      setAlerts((prev) => [{ ...alert, _id: Date.now() + Math.random() }, ...prev].slice(0, 50))
+    );
+
+    // Enriched signal: sentiment + intent label per message
+    socket.on('sentiment:update', (payload) =>
+      setSentiments((prev) => [...prev, { ...payload, _id: Date.now() + Math.random() }].slice(-120))
+    );
+
+    // Instant grid updates (no waiting for 10s broadcast)
+    socket.on('participant:joined', ({ participantId, name: n }) =>
+      setParticipants((prev) =>
+        prev.find((p) => p.studentId === participantId)
+          ? prev
+          : [...prev, { studentId: participantId, name: n, messageCount: 0, participationScore: 100, silentDurationMs: 0, lastIntent: 'engaged' }]
+      )
+    );
+    socket.on('participant:left', ({ participantId }) =>
+      setParticipants((prev) => prev.filter((p) => p.studentId !== participantId))
+    );
+
+    // Patch participant intent in local state on every sentiment update
+    // so participant tiles update their intent badge without waiting for room:state
+    socket.on('sentiment:update', ({ participantId, intent }) => {
+      if (!intent) return;
+      setParticipants((prev) =>
+        prev.map((p) =>
+          p.studentId === participantId ? { ...p, lastIntent: intent.label } : p
+        )
+      );
     });
 
-    socket.on('engagement:alert', (alert) => {
-      setAlerts((prev) => [{ ...alert, id: Date.now() }, ...prev].slice(0, 50));
-    });
-
-    socket.on('sentiment:update', (payload) => {
-      setSentiments((prev) => [...prev, { ...payload, id: Date.now() }].slice(-120));
-    });
-
-    // Participant listeners: update grid immediately on join/leave without waiting for 10s broadcast
-    socket.on('participant:joined', ({ participantId, name: n }) => {
-      setParticipants((prev) => {
-        if (prev.find((p) => p.studentId === participantId)) return prev;
-        return [
-          ...prev,
-          { studentId: participantId, name: n, messageCount: 0, participationScore: 100, silentDurationMs: 0 },
-        ];
-      });
-    });
-
-    socket.on('participant:left', ({ participantId }) => {
-      setParticipants((prev) => prev.filter((p) => p.studentId !== participantId));
-    });
-
-    // Ask for immediate snapshot on connect
     socket.emit('request:state');
-
     return () => socket.disconnect();
   }, [role, sessionId, name]);
 
-  const sendMessage = (text) => {
-    if (socketRef.current?.connected) {
-      socketRef.current.emit('student:message', { text });
-    }
-  };
-
-  const endSession = () => {
-    if (socketRef.current?.connected) {
-      socketRef.current.emit('session:end');
-    }
-  };
+  const sendMessage = (text) => socketRef.current?.connected && socketRef.current.emit('student:message', { text });
+  const endSession  = ()     => socketRef.current?.connected && socketRef.current.emit('session:end');
 
   return { participants, alerts, sentiments, connected, sendMessage, endSession };
 }

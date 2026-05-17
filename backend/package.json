@@ -1,7 +1,7 @@
 {
   "name": "engagex-backend",
   "version": "1.0.0",
-  "description": "EngageX AI Teaching Co-Pilot — Backend",
+  "description": "EngageX AI Meeting Co-Pilot — Backend",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
