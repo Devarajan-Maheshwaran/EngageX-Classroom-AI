@@ -1,21 +1,30 @@
-import { useState, useEffect, useRef } from 'react';
+// useMeetingSocket.js — central socket hook for EngageX
+// Phase 5A: consumes all Phase 3A-4B backend fields:
+//   sentiment:update  → { label, score, intentLabel, intentScore, allScores }
+//   room:state        → { students[].lastIntentLabel, lastIntentScore }
+//   engagement:alert  → { type, message, suggestion, suggestionAI }
+//   participant:joined → { reconnect: boolean }
+//   error:session / error:message / error:auth
+
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
 
-const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
 
 export function useMeetingSocket({ role, sessionId, name }) {
   const [participants, setParticipants] = useState([]);
-  const [alerts,       setAlerts]       = useState([]);
-  const [sentiments,   setSentiments]   = useState([]);
-  const [connected,    setConnected]    = useState(false);
+  const [alerts, setAlerts]             = useState([]);
+  const [sentiments, setSentiments]     = useState([]);
+  const [connected, setConnected]       = useState(false);
+  const [sessionError, setSessionError] = useState(null);
   const socketRef = useRef(null);
 
   useEffect(() => {
     if (!sessionId || !role) return;
 
-    const socket = io(BACKEND, {
-      query: { role, sessionId, name: name || 'Anonymous' },
-      transports: ['websocket', 'polling'],
+    const socket = io(BACKEND_URL, {
+      query:             { role, sessionId, name: name || 'Anonymous' },
+      reconnectionDelay: 1000,
       reconnectionAttempts: 5,
     });
     socketRef.current = socket;
@@ -23,48 +32,95 @@ export function useMeetingSocket({ role, sessionId, name }) {
     socket.on('connect',    () => setConnected(true));
     socket.on('disconnect', () => setConnected(false));
 
-    // Full snapshot every 10s
-    socket.on('room:state', ({ students }) => setParticipants(students || []));
-
-    // Agent alerts (with suggestion attached by mentorAgent)
-    socket.on('engagement:alert', (alert) =>
-      setAlerts((prev) => [{ ...alert, _id: Date.now() + Math.random() }, ...prev].slice(0, 50))
-    );
-
-    // Enriched signal: sentiment + intent label per message
-    socket.on('sentiment:update', (payload) =>
-      setSentiments((prev) => [...prev, { ...payload, _id: Date.now() + Math.random() }].slice(-120))
-    );
-
-    // Instant grid updates (no waiting for 10s broadcast)
-    socket.on('participant:joined', ({ participantId, name: n }) =>
-      setParticipants((prev) =>
-        prev.find((p) => p.studentId === participantId)
-          ? prev
-          : [...prev, { studentId: participantId, name: n, messageCount: 0, participationScore: 100, silentDurationMs: 0, lastIntent: 'engaged' }]
-      )
-    );
-    socket.on('participant:left', ({ participantId }) =>
-      setParticipants((prev) => prev.filter((p) => p.studentId !== participantId))
-    );
-
-    // Patch participant intent in local state on every sentiment update
-    // so participant tiles update their intent badge without waiting for room:state
-    socket.on('sentiment:update', ({ participantId, intent }) => {
-      if (!intent) return;
-      setParticipants((prev) =>
-        prev.map((p) =>
-          p.studentId === participantId ? { ...p, lastIntent: intent.label } : p
-        )
-      );
+    // Full participant snapshot (every 10s + on join)
+    socket.on('room:state', ({ students }) => {
+      setParticipants(students || []);
     });
 
-    socket.emit('request:state');
-    return () => socket.disconnect();
+    // Individual join/leave — reconnect flag from Phase 4B
+    socket.on('participant:joined', ({ participantId, name: joinName, reconnect }) => {
+      setParticipants((prev) => {
+        // On reconnect the room:state will correct the record; just log
+        if (reconnect) return prev;
+        // Avoid adding duplicates (room:state will populate shortly)
+        if (prev.find((p) => p.studentId === participantId)) return prev;
+        return [...prev, {
+          studentId: participantId, name: joinName,
+          messageCount: 0, participationScore: 100,
+          lastIntentLabel: 'engaged', lastIntentScore: 0.5,
+          silentDurationMs: 0,
+        }];
+      });
+    });
+
+    socket.on('participant:left', ({ participantId }) => {
+      setParticipants((prev) => prev.filter((p) => p.studentId !== participantId));
+    });
+
+    // Enriched sentiment events (Phase 3A: intentLabel, allScores)
+    socket.on('sentiment:update', (payload) => {
+      setSentiments((prev) => [...prev, payload].slice(-100)); // keep last 100
+    });
+
+    // Alerts with suggestion + AI badge (Phase 3B)
+    socket.on('engagement:alert', (alert) => {
+      setAlerts((prev) => [{ ...alert, receivedAt: Date.now() }, ...prev].slice(0, 50));
+    });
+
+    // Error events from Phase 4B server guards
+    socket.on('error:session', ({ message }) => setSessionError(message));
+    socket.on('error:auth',    ({ message }) => console.warn('[Socket] Auth error:', message));
+    socket.on('error:message', ({ message }) => console.warn('[Socket] Msg error:', message));
+
+    // Session ended by host
+    socket.on('session:ended', () => {
+      setConnected(false);
+      setSessionError('Session has ended.');
+    });
+
+    return () => {
+      socket.disconnect();
+      socketRef.current = null;
+    };
   }, [role, sessionId, name]);
 
-  const sendMessage = (text) => socketRef.current?.connected && socketRef.current.emit('student:message', { text });
-  const endSession  = ()     => socketRef.current?.connected && socketRef.current.emit('session:end');
+  // Participant sends a chat message
+  const sendMessage = useCallback((text) => {
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('student:message', { text });
+    }
+  }, []);
 
-  return { participants, alerts, sentiments, connected, sendMessage, endSession };
+  // Host ends the session
+  const endSession = useCallback(() => {
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('session:end');
+    }
+  }, []);
+
+  // Compute room mood from last 10 sentiments (mirrors backend getRoomMood logic)
+  const roomMood = (() => {
+    const window = sentiments.slice(-10);
+    if (!window.length) return 'neutral';
+    let neg = 0, pos = 0;
+    window.forEach(({ intentLabel, label }) => {
+      if (['confused', 'frustrated', 'bored'].includes(intentLabel)) neg++;
+      else if (['excited', 'engaged'].includes(intentLabel) && label === 'POSITIVE') pos++;
+    });
+    const total = window.length;
+    if (neg / total > 0.4) return 'confused';
+    if (pos / total > 0.4) return 'positive';
+    return 'neutral';
+  })();
+
+  return {
+    participants,
+    alerts,
+    sentiments,
+    connected,
+    sessionError,
+    roomMood,
+    sendMessage,
+    endSession,
+  };
 }

@@ -1,97 +1,95 @@
+// HostDashboard.jsx — Phase 5A
+// Two-column live dashboard.
+// Left:  SessionHeader + ParticipantGrid + SentimentTimeline
+// Right: AlertFeed
+// Optional debug panel: append ?debug=1 to URL
+
 import { useSearchParams } from 'react-router-dom';
 import { useMeetingSocket }  from '../hooks/useMeetingSocket';
-import SessionHeader          from '../components/SessionHeader';
-import ParticipantGrid        from '../components/ParticipantGrid';
-import SentimentTimeline      from '../components/SentimentTimeline';
-import AlertFeed              from '../components/AlertFeed';
-
-// Derive room mood from last 10 sentiment events
-function computeMood(sentiments) {
-  const recent = sentiments.slice(-10);
-  if (!recent.length) return 'neutral';
-  const avg = recent.reduce((acc, s) => {
-    const score = s.sentiment
-      ? (s.sentiment.label === 'POSITIVE' ? s.sentiment.score : 1 - s.sentiment.score)
-      : 0.5;
-    return acc + score;
-  }, 0) / recent.length;
-  if (avg >= 0.65) return 'positive';
-  if (avg <= 0.38) return 'confused';
-  return 'neutral';
-}
-
-// Derive engagement breakdown from participant list
-function computeStats(participants) {
-  const total     = participants.length;
-  const engaged   = participants.filter((p) => (p.participationScore ?? 100) >= 70).length;
-  const passive   = participants.filter((p) => { const s = p.participationScore ?? 100; return s >= 35 && s < 70; }).length;
-  const silent    = participants.filter((p) => (p.participationScore ?? 100) < 35).length;
-  return { total, engaged, passive, silent };
-}
+import SessionHeader        from '../components/SessionHeader';
+import ParticipantGrid      from '../components/ParticipantGrid';
+import SentimentTimeline    from '../components/SentimentTimeline';
+import AlertFeed            from '../components/AlertFeed';
 
 export default function HostDashboard() {
-  const [params]  = useSearchParams();
-  const sessionId = params.get('sessionId');
+  const [searchParams] = useSearchParams();
+  const sessionId      = searchParams.get('sessionId') || '';
+  const debug          = searchParams.get('debug') === '1';
 
-  const { participants, alerts, sentiments, connected, endSession } =
-    useMeetingSocket({ role: 'teacher', sessionId, name: 'Host' });
-
-  const mood  = computeMood(sentiments);
-  const stats = computeStats(participants);
+  const {
+    participants, alerts, sentiments,
+    connected, sessionError, roomMood,
+    endSession,
+  } = useMeetingSocket({ role: 'teacher', sessionId, name: 'Host' });
 
   if (!sessionId) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-gray-400">
-        No session ID. <a href="/" className="text-brand ml-2 underline">Start one here</a>
+      <div className="min-h-screen flex items-center justify-center text-slate-400">
+        No session ID. <a href="/" className="ml-2 text-brand underline">Go home</a>
+      </div>
+    );
+  }
+
+  if (sessionError) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 text-slate-400">
+        <span className="text-3xl">🚫</span>
+        <p className="text-white">{sessionError}</p>
+        <a href="/" className="text-brand underline text-sm">Back to home</a>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-surface flex flex-col">
-      <SessionHeader sessionId={sessionId} connected={connected} mood={mood} onEnd={endSession} />
+    <div className="min-h-screen flex flex-col bg-bg">
+      <SessionHeader
+        sessionId={sessionId}
+        connected={connected}
+        roomMood={roomMood}
+        participantCount={participants.length}
+        onEnd={endSession}
+      />
 
-      {/* Quick stats bar */}
-      <div className="flex gap-4 px-4 pt-3 pb-1 text-sm">
-        {[
-          { label: 'Total',   value: stats.total,   color: 'text-gray-400'   },
-          { label: 'Engaged', value: stats.engaged,  color: 'text-green-400'  },
-          { label: 'Passive', value: stats.passive,  color: 'text-yellow-400' },
-          { label: 'Silent',  value: stats.silent,   color: 'text-red-400'    },
-          { label: 'Alerts',  value: alerts.length,  color: 'text-brand'      },
-        ].map((s) => (
-          <div key={s.label} className="bg-surface-card border border-surface-border rounded-xl px-4 py-2 flex flex-col items-center min-w-[70px]">
-            <span className={`text-xl font-bold ${s.color}`}>{s.value}</span>
-            <span className="text-xs text-gray-500">{s.label}</span>
-          </div>
-        ))}
-      </div>
-
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-4 p-4">
-        {/* Left: 2 cols */}
-        <div className="lg:col-span-2 flex flex-col gap-4">
-          <div className="bg-surface-card border border-surface-border rounded-2xl p-4">
-            <h2 className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-widest">
-              Participants ({participants.length})
-            </h2>
+      <main className="flex flex-1 gap-0 overflow-hidden">
+        {/* Left column */}
+        <div className="flex flex-col flex-1 gap-4 p-5 overflow-y-auto">
+          <section>
+            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Participants</h2>
             <ParticipantGrid participants={participants} />
-          </div>
-          <div className="bg-surface-card border border-surface-border rounded-2xl p-4">
-            <h2 className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-widest">
-              Live Sentiment &amp; Intent
-            </h2>
+          </section>
+
+          <section>
+            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Sentiment timeline</h2>
             <SentimentTimeline sentiments={sentiments} />
-          </div>
+          </section>
+
+          {/* Optional debug panel — ?debug=1 */}
+          {debug && (
+            <section className="mt-2 p-3 rounded-xl bg-white/5 border border-white/10">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Debug</p>
+              <p className="text-xs text-slate-300">Session: <span className="font-mono text-white">{sessionId}</span></p>
+              <p className="text-xs text-slate-300">Connected: <span className="text-white">{connected ? 'yes' : 'no'}</span></p>
+              <p className="text-xs text-slate-300">Participants: <span className="text-white">{participants.length}</span></p>
+              <p className="text-xs text-slate-300">Sentiments logged: <span className="text-white">{sentiments.length}</span></p>
+              <p className="text-xs text-slate-300">Alerts fired: <span className="text-white">{alerts.length}</span></p>
+              <details className="mt-1">
+                <summary className="text-xs text-slate-500 cursor-pointer">Last sentiment payload</summary>
+                <pre className="text-xs text-slate-400 mt-1 whitespace-pre-wrap break-all">
+                  {JSON.stringify(sentiments[sentiments.length - 1] || {}, null, 2)}
+                </pre>
+              </details>
+            </section>
+          )}
         </div>
 
-        {/* Right: alert feed */}
-        <div className="bg-surface-card border border-surface-border rounded-2xl p-4 flex flex-col min-h-[400px]">
-          <h2 className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-widest">
-            AI Alerts
+        {/* Right column — alert feed */}
+        <div className="w-80 shrink-0 border-l border-border flex flex-col p-4 overflow-hidden">
+          <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
+            Agent alerts ({alerts.length})
           </h2>
           <AlertFeed alerts={alerts} />
         </div>
-      </div>
+      </main>
     </div>
   );
 }

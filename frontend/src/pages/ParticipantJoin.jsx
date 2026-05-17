@@ -1,149 +1,174 @@
-import { useState, useRef } from 'react';
+// ParticipantJoin.jsx — Phase 5A
+// Simple join form → minimal chat UI + 4 quick reaction buttons.
+// Reaction buttons send a natural-language phrase so the AI pipeline
+// classifies them as real intent (not synthetic triggers).
+
+import { useState, useRef, useEffect } from 'react';
 import { useMeetingSocket } from '../hooks/useMeetingSocket';
 
 const REACTIONS = [
-  { label: '😕 Confused',  text: 'I am confused and need clarification on this.' },
-  { label: '👍 Got it',    text: 'I understand this clearly, makes sense.' },
-  { label: '🔥 Excited',   text: 'This is really interesting and exciting!' },
-  { label: '😴 Lost',      text: 'I feel completely lost right now.' },
+  { label: 'Confused 😕',  text: "I'm really confused about this right now." },
+  { label: 'Got it ✅',    text: "I understand this, it's clear to me." },
+  { label: 'Excited 🚀',  text: "This is really exciting and interesting!" },
+  { label: 'Lost 😴',     text: "I'm lost and not following along anymore." },
 ];
 
-export default function ParticipantJoin() {
-  const [name,      setName]      = useState('');
-  const [code,      setCode]      = useState('');
-  const [joined,    setJoined]    = useState(false);
-  const [sessionId, setSessionId] = useState('');
-  const [messages,  setMessages]  = useState([]);
-  const [input,     setInput]     = useState('');
-  const inputRef = useRef(null);
+function JoinForm({ onJoin }) {
+  const [name, setName]         = useState('');
+  const [code, setCode]         = useState('');
+  const [error, setError]       = useState('');
 
-  const { connected, sendMessage } = useMeetingSocket(
-    joined ? { role: 'student', sessionId, name } : { role: null, sessionId: null, name: null }
-  );
-
-  function handleJoin(e) {
+  function handleSubmit(e) {
     e.preventDefault();
-    if (!name.trim() || !code.trim()) return;
-    setSessionId(code.trim().toUpperCase());
-    setJoined(true);
+    const n = name.trim();
+    const c = code.trim().toUpperCase();
+    if (!n) { setError('Enter your name.'); return; }
+    if (c.length < 4) { setError('Enter a valid session code.'); return; }
+    onJoin(c, n);
   }
 
-  function handleSend(e) {
-    e.preventDefault();
-    const text = input.trim();
-    if (!text) return;
-    sendMessage(text);
-    setMessages((prev) => [...prev, { text, ts: Date.now(), type: 'out' }]);
-    setInput('');
-    inputRef.current?.focus();
-  }
-
-  function handleReaction(text) {
-    sendMessage(text);
-    setMessages((prev) => [...prev, { text, ts: Date.now(), type: 'reaction' }]);
-  }
-
-  if (!joined) {
-    return (
-      <div className="min-h-screen flex items-center justify-center px-4">
-        <div className="bg-surface-card border border-surface-border rounded-2xl p-8 w-full max-w-sm">
-          <h1 className="text-2xl font-bold mb-1">Join a session</h1>
-          <p className="text-gray-400 text-sm mb-6">Enter the code your host shared</p>
-          <form onSubmit={handleJoin} className="flex flex-col gap-4">
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-bg px-4">
+      <div className="w-full max-w-sm">
+        <div className="mb-8 text-center">
+          <h1 className="text-2xl font-bold text-white mb-1">Join a session</h1>
+          <p className="text-slate-400 text-sm">Enter the code your host shared</p>
+        </div>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">Your name</label>
             <input
-              className="bg-surface border border-surface-border rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-brand"
-              placeholder="Your name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              required
+              placeholder="e.g. Devarajan"
+              maxLength={40}
+              className="w-full bg-surface border border-border rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-brand"
             />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">Session code</label>
             <input
-              className="bg-surface border border-surface-border rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-brand uppercase tracking-widest text-center text-lg font-semibold"
-              placeholder="SESSION CODE"
               value={code}
               onChange={(e) => setCode(e.target.value.toUpperCase())}
-              maxLength={6}
-              required
+              placeholder="e.g. AB12CD"
+              maxLength={10}
+              className="w-full bg-surface border border-border rounded-xl px-4 py-3 text-white placeholder-slate-500 font-mono tracking-widest focus:outline-none focus:border-brand"
             />
-            <button
-              type="submit"
-              className="bg-brand hover:bg-brand-dark text-white font-semibold py-3 rounded-xl transition"
-            >
-              Join →
-            </button>
-          </form>
-        </div>
+          </div>
+          {error && <p className="text-rose-400 text-xs">{error}</p>}
+          <button
+            type="submit"
+            className="w-full py-3 rounded-xl bg-brand text-white font-semibold hover:opacity-90 transition-opacity"
+          >
+            Join session
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function SessionRoom({ sessionId, name }) {
+  const { sendMessage, sessionError, connected } = useMeetingSocket({
+    role: 'student', sessionId, name,
+  });
+
+  const [text, setText]     = useState('');
+  const [messages, setMsgs] = useState([]);
+  const bottomRef           = useRef(null);
+
+  function send(txt) {
+    const t = txt.trim();
+    if (!t) return;
+    sendMessage(t);
+    setMsgs((prev) => [...prev, { text: t, ts: Date.now() }]);
+    setText('');
+  }
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  if (sessionError) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 text-slate-400">
+        <span className="text-3xl">🚫</span>
+        <p className="text-white">{sessionError}</p>
+        <a href="/join" className="text-brand underline text-sm">Rejoin</a>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex flex-col max-w-lg mx-auto px-4 py-6">
+    <div className="min-h-screen flex flex-col bg-bg">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
+      <header className="flex items-center justify-between px-5 py-3 bg-surface border-b border-border">
         <div>
-          <h1 className="font-bold text-lg">Session <span className="text-brand font-mono">{sessionId}</span></h1>
-          <p className="text-gray-400 text-sm">Joined as <span className="text-white">{name}</span></p>
+          <span className="text-white font-semibold">Session </span>
+          <span className="font-mono text-brand font-bold">{sessionId}</span>
         </div>
-        <div className={`flex items-center gap-1.5 text-xs px-3 py-1 rounded-full ${
-          connected ? 'bg-green-900/40 text-green-400' : 'bg-yellow-900/40 text-yellow-400'
-        }`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${ connected ? 'bg-green-400' : 'bg-yellow-400 animate-pulse'}`} />
-          {connected ? 'Live' : 'Connecting…'}
+        <div className="flex items-center gap-1.5 text-xs text-slate-400">
+          <span className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+          {connected ? `Connected as ${name}` : 'Reconnecting…'}
         </div>
-      </div>
+      </header>
 
-      {/* Reactions */}
-      <div className="mb-4">
-        <p className="text-xs text-gray-500 mb-2">Quick reaction</p>
-        <div className="flex flex-wrap gap-2">
-          {REACTIONS.map((r) => (
-            <button
-              key={r.label}
-              onClick={() => handleReaction(r.text)}
-              className="bg-surface-card border border-surface-border hover:border-brand text-sm px-3 py-1.5 rounded-lg transition"
-            >
-              {r.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Messages */}
-      <div className="flex-1 bg-surface-card border border-surface-border rounded-2xl p-4 overflow-y-auto scrollbar-hide mb-4 min-h-[200px] max-h-[40vh] flex flex-col gap-2">
-        {messages.length === 0 && (
-          <p className="text-gray-600 text-sm text-center mt-auto mb-auto">
-            Your messages appear here. The host's AI sees your signals live.
-          </p>
-        )}
-        {messages.map((m) => (
-          <div key={m.ts} className={`text-sm px-3 py-2 rounded-xl max-w-[85%] self-end ${
-            m.type === 'reaction'
-              ? 'bg-brand/20 text-brand border border-brand/30'
-              : 'bg-surface border border-surface-border text-gray-300'
-          }`}>
-            {m.text}
-          </div>
+      {/* Reaction quick-buttons */}
+      <div className="flex gap-2 flex-wrap px-4 pt-4">
+        {REACTIONS.map((r) => (
+          <button
+            key={r.label}
+            onClick={() => send(r.text)}
+            className="px-3 py-1.5 rounded-full text-sm bg-white/5 border border-border text-slate-300 hover:bg-white/10 hover:text-white transition-colors"
+          >
+            {r.label}
+          </button>
         ))}
       </div>
 
-      {/* Chat input */}
-      <form onSubmit={handleSend} className="flex gap-2">
-        <input
-          ref={inputRef}
-          className="flex-1 bg-surface-card border border-surface-border rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-brand"
-          placeholder="Type a message or question…"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-        />
-        <button
-          type="submit"
-          disabled={!connected}
-          className="bg-brand hover:bg-brand-dark disabled:opacity-50 text-white px-5 py-3 rounded-xl transition font-medium"
-        >
-          Send
-        </button>
-      </form>
+      {/* Message feed */}
+      <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-2">
+        {messages.length === 0 && (
+          <p className="text-slate-500 text-sm text-center mt-8">Type a message or use a reaction button above.</p>
+        )}
+        {messages.map((m, i) => (
+          <div key={i} className="self-end max-w-xs bg-brand/20 border border-brand/30 rounded-2xl rounded-br-sm px-4 py-2">
+            <p className="text-sm text-white">{m.text}</p>
+          </div>
+        ))}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Input bar */}
+      <div className="px-4 pb-4 pt-2 border-t border-border">
+        <div className="flex gap-2">
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && send(text)}
+            placeholder="Type a message…"
+            maxLength={500}
+            className="flex-1 bg-surface border border-border rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-brand"
+          />
+          <button
+            onClick={() => send(text)}
+            className="px-5 py-3 rounded-xl bg-brand text-white font-medium hover:opacity-90 transition-opacity"
+          >
+            Send
+          </button>
+        </div>
+      </div>
     </div>
   );
+}
+
+export default function ParticipantJoin() {
+  const [joined, setJoined]       = useState(false);
+  const [sessionId, setSessionId] = useState('');
+  const [name, setName]           = useState('');
+
+  if (!joined) {
+    return <JoinForm onJoin={(code, n) => { setSessionId(code); setName(n); setJoined(true); }} />;
+  }
+  return <SessionRoom sessionId={sessionId} name={name} />;
 }

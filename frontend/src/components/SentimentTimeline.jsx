@@ -1,76 +1,123 @@
+// SentimentTimeline.jsx — Phase 5A
+// Recharts AreaChart of sentiment scores over time.
+// New in 5A:
+//   • Dynamic gradient: majority confused/frustrated → red; majority excited/engaged → green
+//   • Custom tooltip shows both sentiment label + intentLabel
+//   • Second stacked area for intent score (lighter, overlaid)
+
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, ReferenceLine,
+  Tooltip, ResponsiveContainer, defs, linearGradient, stop,
 } from 'recharts';
 
-const INTENT_COLOR = {
-  confused:   '#f97316',
-  frustrated: '#ef4444',
-  excited:    '#22c55e',
-  engaged:    '#6366f1',
+const INTENT_LABEL_COLOR = {
+  confused:   '#f87171', // rose-400
+  frustrated: '#fb923c', // orange-400
+  excited:    '#34d399', // emerald-400
+  engaged:    '#60a5fa', // blue-400
+  bored:      '#94a3b8', // slate-400
 };
 
-function formatTime(ts) {
-  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+function deriveGradientId(sentiments) {
+  if (!sentiments.length) return 'grad-neutral';
+  const last10 = sentiments.slice(-10);
+  let neg = 0, pos = 0;
+  last10.forEach(({ intentLabel, label }) => {
+    if (['confused', 'frustrated', 'bored'].includes(intentLabel)) neg++;
+    else if (['excited', 'engaged'].includes(intentLabel) && label === 'POSITIVE') pos++;
+  });
+  const total = last10.length;
+  if (neg / total > 0.4) return 'grad-confused';
+  if (pos / total > 0.4) return 'grad-positive';
+  return 'grad-neutral';
 }
 
-function CustomDot({ cx, cy, payload }) {
-  const color = INTENT_COLOR[payload?.intent?.label] || '#6366f1';
-  return <circle cx={cx} cy={cy} r={4} fill={color} stroke="#1e1e2e" strokeWidth={1.5} />;
+function CustomTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0]?.payload;
+  if (!d) return null;
+  return (
+    <div className="bg-surface border border-border rounded-lg px-3 py-2 text-xs shadow-lg">
+      <p className="text-white font-medium">{d.name}</p>
+      <p className="text-slate-300">"{d.text?.slice(0, 60)}{d.text?.length > 60 ? '…' : ''}"</p>
+      <p className="mt-1">
+        <span className="text-slate-400">Sentiment: </span>
+        <span style={{ color: d.label === 'POSITIVE' ? '#34d399' : '#f87171' }}>
+          {d.label} ({(d.score * 100).toFixed(0)}%)
+        </span>
+      </p>
+      <p>
+        <span className="text-slate-400">Intent: </span>
+        <span style={{ color: INTENT_LABEL_COLOR[d.intentLabel] || '#94a3b8' }}>
+          {d.intentLabel} ({(d.intentScore * 100).toFixed(0)}%)
+        </span>
+      </p>
+    </div>
+  );
 }
 
 export default function SentimentTimeline({ sentiments }) {
-  const data = sentiments.map((s) => ({
-    time:   formatTime(s.ts),
-    score:  s.sentiment
-              ? (s.sentiment.label === 'POSITIVE'
-                  ? parseFloat((s.sentiment.score * 100).toFixed(1))
-                  : parseFloat(((1 - s.sentiment.score) * 100).toFixed(1)))
-              : 50,
-    name:   s.name,
-    intent: s.intent,
-    label:  s.sentiment?.label,
-  }));
-
-  if (!data.length) {
+  if (!sentiments.length) {
     return (
-      <div className="flex items-center justify-center h-28 text-gray-600 text-sm">
-        Waiting for participant messages…
+      <div className="flex items-center justify-center h-40 text-slate-500 text-sm">
+        Waiting for messages to chart sentiment…
       </div>
     );
   }
 
+  // Convert score to 0–100 scale for the chart
+  const data = sentiments.map((s) => ({
+    ...s,
+    sentimentVal: s.label === 'POSITIVE' ? s.score * 100 : (1 - s.score) * 100,
+    intentVal:    s.intentScore * 100,
+  }));
+
+  const gradId = deriveGradientId(sentiments);
+
+  const gradColors = {
+    'grad-positive': { stroke: '#34d399', fill: '#34d399' },
+    'grad-confused':  { stroke: '#f87171', fill: '#f87171' },
+    'grad-neutral':   { stroke: '#60a5fa', fill: '#60a5fa' },
+  };
+  const { stroke, fill } = gradColors[gradId];
+
   return (
-    <ResponsiveContainer width="100%" height={170}>
-      <AreaChart data={data} margin={{ top: 8, right: 10, left: -20, bottom: 0 }}>
-        <defs>
-          <linearGradient id="sentGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%"  stopColor="#6366f1" stopOpacity={0.35} />
-            <stop offset="95%" stopColor="#6366f1" stopOpacity={0}   />
-          </linearGradient>
-        </defs>
-        <CartesianGrid strokeDasharray="3 3" stroke="#3b3b52" />
-        <XAxis dataKey="time" tick={{ fill: '#6b7280', fontSize: 10 }} interval="preserveStartEnd" />
-        <YAxis domain={[0, 100]} tick={{ fill: '#6b7280', fontSize: 10 }} />
-        <ReferenceLine y={50} stroke="#4b5563" strokeDasharray="4 4" />
-        <Tooltip
-          contentStyle={{ background: '#2a2a3e', border: '1px solid #3b3b52', borderRadius: 10 }}
-          labelStyle={{ color: '#9ca3af', fontSize: 11 }}
-          formatter={(v, _, { payload }) => [
-            `${v}% — ${payload.intent?.label || 'unknown'} ${payload.label === 'POSITIVE' ? '😊' : '😕'}`,
-            payload.name,
-          ]}
-        />
-        <Area
-          type="monotone"
-          dataKey="score"
-          stroke="#6366f1"
-          strokeWidth={2}
-          fill="url(#sentGrad)"
-          dot={<CustomDot />}
-          activeDot={{ r: 6 }}
-        />
-      </AreaChart>
-    </ResponsiveContainer>
+    <div>
+      <p className="text-xs text-slate-400 mb-2">Sentiment timeline — last {sentiments.length} messages</p>
+      <ResponsiveContainer width="100%" height={160}>
+        <AreaChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+          <defs>
+            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%"  stopColor={fill} stopOpacity={0.35} />
+              <stop offset="95%" stopColor={fill} stopOpacity={0.02} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+          <XAxis dataKey="ts" hide />
+          <YAxis domain={[0, 100]} tick={{ fill: '#475569', fontSize: 10 }} />
+          <Tooltip content={<CustomTooltip />} />
+          {/* Primary: sentiment score */}
+          <Area
+            type="monotone"
+            dataKey="sentimentVal"
+            stroke={stroke}
+            strokeWidth={2}
+            fill={`url(#${gradId})`}
+            dot={false}
+            activeDot={{ r: 4, fill: stroke }}
+          />
+          {/* Secondary: intent confidence (lighter overlay) */}
+          <Area
+            type="monotone"
+            dataKey="intentVal"
+            stroke={stroke}
+            strokeWidth={1}
+            strokeOpacity={0.4}
+            fill="none"
+            dot={false}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
