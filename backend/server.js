@@ -1,6 +1,7 @@
 // server.js — EngageX backend: Express + Socket.IO
-// Phase 3A: nli-deberta-v3-small classifier runs in parallel with sentiment on every message.
-// Both models warm up sequentially at startup so first message is never slow.
+// Phase 3B: engagementService.checkForConfusionSpike() called after every message.
+// Phase 3A: nli-deberta-v3-small classifier runs in parallel with sentiment.
+// Both models warm up sequentially at startup.
 const express    = require('express');
 const http       = require('http');
 const { Server } = require('socket.io');
@@ -12,6 +13,7 @@ const participationService = require('./services/participationService');
 const sentimentService     = require('./services/sentimentService');
 const classifierService    = require('./services/classifierService');
 const analyticsService     = require('./services/analyticsService');
+const engagementService    = require('./services/engagementService'); // Phase 3B
 const orchestrator         = require('./agents/agentOrchestrator');
 
 const app    = express();
@@ -23,13 +25,9 @@ const io     = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
-// Active session registry — used for 10s room:state broadcast
 const activeSessions = new Set();
 
-// ─── STARTUP: warm up both models sequentially ───────────────────────────────
-// Sequential (not parallel) to avoid RAM spike when both models download
-// simultaneously on Railway first boot. By the time the first participant
-// sends a message, both pipelines are warm and inference is fast.
+// ─── STARTUP: warm up both AI models sequentially ────────────────────────────────
 (async () => {
   try {
     await sentimentService.loadModel();
@@ -59,6 +57,12 @@ app.get('/api/session/:sessionId/summary', (req, res) => {
   res.json(report);
 });
 
+// Room mood endpoint — used by SessionHeader (Phase 5A)
+app.get('/api/session/:sessionId/mood', (req, res) => {
+  const mood = engagementService.getRoomMood(req.params.sessionId);
+  res.json({ sessionId: req.params.sessionId, mood });
+});
+
 // ─── SOCKET.IO ────────────────────────────────────────────────────────────────
 
 io.on('connection', (socket) => {
@@ -72,7 +76,6 @@ io.on('connection', (socket) => {
   socket.join(sessionId);
   socket.data = { role, sessionId, name: name || 'Anonymous' };
 
-  // ── Participant joins ──
   if (role === 'student') {
     participationService.registerStudent(sessionId, socket.id, name || 'Anonymous');
     bus.publish(bus.EVENTS.STUDENT_JOIN, { sessionId, studentId: socket.id, name });
@@ -83,9 +86,14 @@ io.on('connection', (socket) => {
     console.log(`[Join]  ${name || 'Anonymous'} → session ${sessionId}`);
   }
 
-  // ── Participant sends a message ──
-  // Both models run via Promise.allSettled — if one fails, the other still
-  // completes and the session is never interrupted.
+  // ── Core message pipeline ────────────────────────────────────────────────────────
+  // Flow per message:
+  //   1. Run sentiment + classifier in parallel (Promise.allSettled)
+  //   2. Update participationService record (score + lastIntentLabel)
+  //   3. Log to analyticsService (sentimentLog + sliding window)
+  //   4. Publish to eventBus (agents subscribe)
+  //   5. Emit sentiment:update to host dashboard
+  //   6. Check for confusion spike (may emit ENGAGEMENT_ALERT → mentorAgent → socket)
   socket.on('student:message', async ({ text } = {}) => {
     if (!text || typeof text !== 'string' || text.trim().length === 0) return;
     const trimmed = text.trim();
@@ -103,17 +111,14 @@ io.on('connection', (socket) => {
       ? intentResult.value
       : { label: 'engaged', score: 0.5, allScores: {} };
 
-    // Update participation record with latest intent label
     participationService.recordMessage(sessionId, socket.id, intent.label, intent.score);
 
-    // Log enriched entry — updates sentimentLog + sliding window
     analyticsService.logSentiment(
       sessionId, socket.id,
       sentiment.label, sentiment.score,
       intent.label, intent.score, intent.allScores
     );
 
-    // Publish to eventBus for agents (monitorAgent, balancerAgent, engagementService Phase 3B)
     bus.publish(bus.EVENTS.STUDENT_MESSAGE, {
       sessionId,
       studentId: socket.id,
@@ -122,8 +127,6 @@ io.on('connection', (socket) => {
       intent,
     });
 
-    // Broadcast enriched update to host dashboard
-    // intentLabel + allScores let the frontend show live mood badges (Phase 5A)
     io.to(sessionId).emit('sentiment:update', {
       participantId: socket.id,
       name:          socket.data.name,
@@ -135,15 +138,19 @@ io.on('connection', (socket) => {
       allScores:     intent.allScores,
       ts:            Date.now(),
     });
+
+    // Phase 3B: check for confusion spike after every message.
+    // Synchronous check — spike detection is purely in-memory (no await needed).
+    // If spike fires, mentorAgent’s bus subscriber attaches suggestion asynchronously
+    // before server.js’s ENGAGEMENT_ALERT subscriber emits to the socket room.
+    engagementService.checkForConfusionSpike(sessionId);
   });
 
-  // ── Host requests immediate snapshot ──
   socket.on('request:state', () => {
     const snapshot = participationService.getSnapshot(sessionId);
     socket.emit('room:state', { sessionId, students: snapshot, ts: Date.now() });
   });
 
-  // ── Host ends session ──
   socket.on('session:end', () => {
     if (role !== 'teacher') return;
     orchestrator.endSession(sessionId);
@@ -152,7 +159,6 @@ io.on('connection', (socket) => {
     console.log(`[Session] Ended: ${sessionId}`);
   });
 
-  // ── Disconnect ──
   socket.on('disconnect', () => {
     if (role === 'student') {
       participationService.removeStudent(sessionId, socket.id);
@@ -164,8 +170,6 @@ io.on('connection', (socket) => {
 });
 
 // ─── 10s ROOM:STATE BROADCAST ─────────────────────────────────────────────────
-// Snapshot now includes lastIntentLabel per participant (Phase 3A).
-// Host dashboard tiles update without needing to poll REST.
 setInterval(() => {
   activeSessions.forEach((sessionId) => {
     const snapshot = participationService.getSnapshot(sessionId);
@@ -174,6 +178,8 @@ setInterval(() => {
 }, 10000);
 
 // ─── FORWARD AGENT ALERTS → SOCKET ROOMS ──────────────────────────────────────
+// This subscriber fires AFTER mentorAgent’s subscriber has attached payload.suggestion.
+// So engagement:alert always arrives at the frontend with suggestion + suggestionAI fields.
 bus.subscribe(bus.EVENTS.ENGAGEMENT_ALERT, (payload) => {
   analyticsService.logAlert(
     payload.sessionId,

@@ -1,67 +1,133 @@
 // mentorAgent.js — attaches actionable suggestions to every engagement alert
-// If HF_API_KEY is set: uses mistralai/Mistral-7B-Instruct-v0.2 via HF Inference API (free tier)
-// Otherwise: falls back to curated static suggestions (always fast, always works)
+//
+// Tiered suggestion strategy (Phase 3B):
+//   Tier 1 — HuggingFace Inference API (Mistral-7B-Instruct-v0.2, free tier)
+//             Used when HF_API_KEY env var is set.
+//             Generates context-aware, natural-language suggestions.
+//   Tier 2 — Curated static suggestions (always fast, always works)
+//             Randomly selected from a per-alert-type pool.
+//             Each pool has 5 varied, high-quality suggestions.
+//
+// The mentor auto-wires itself by subscribing to ENGAGEMENT_ALERT on require.
+// It mutates payload.suggestion BEFORE the alert reaches server.js’s bus subscriber
+// (which emits to the socket room), so the suggestion is always present in the
+// engagement:alert event the frontend receives.
+
 const bus              = require('../services/eventBus');
 const analyticsService = require('../services/analyticsService');
 
+// ─── Static suggestion pools ─────────────────────────────────────────────────────
+// 5 suggestions per type — varied in approach so repeated alerts don’t feel stale.
 const STATIC = {
   SILENT_PARTICIPANTS: [
-    'Ask a quick open question: "Drop a 1-word reaction to what we just covered."',
-    'Run a 60-second anonymous poll to re-anchor quiet participants.',
-    'Try think-pair-share: ask everyone to type their understanding before continuing.',
-    'Call a short 2-minute break — silence often means cognitive overload.',
+    'Drop a direct question: “Type one word describing what you just heard.”',
+    'Run a quick 30-second anonymous poll — re-anchor silent participants.',
+    'Try think-pair-share: ask everyone to type their current understanding.',
+    'Call a 2-minute break — prolonged silence often signals cognitive overload.',
+    'Ask participants to rate their understanding 1–5 in chat right now.',
   ],
   PARTICIPATION_IMBALANCE: [
-    'Call on a specific participant gently: "[Name], what\'s your take?"',
-    'Switch to breakout rooms for 5 min — quieter participants open up in smaller groups.',
-    'Use anonymous mode: "Type your answer — I won\'t show names, just read patterns."',
-    'Pose a yes/no question and ask everyone to reply in chat simultaneously.',
+    'Gently direct: “[quieter participant], what’s your take on this?”',
+    'Switch to breakout rooms for 5 min — quieter voices open up in smaller groups.',
+    'Use anonymous mode: “Type your answer, I’ll read patterns, not names.”',
+    'Pose a yes/no question — ask everyone to reply in chat simultaneously.',
+    'Pause the dominant speaker and explicitly invite others: “Let’s hear from the rest.”',
   ],
   CONFUSION_SPIKE: [
     'Pause and re-explain the last concept with a concrete real-world analogy.',
-    'Live-code or sketch a minimal example — visual resets mental models faster.',
-    'Ask the room: "On a scale of 1–5, how clear is this? Reply in chat."',
-    'Backtrack one step — confusion spikes often mean the prior concept wasn\'t solid.',
+    'Live-demonstrate or sketch a minimal example — visuals reset mental models faster.',
+    'Ask the room: “Scale of 1–5, how clear is this right now? Reply in chat.”',
+    'Backtrack one step — spikes often mean the prior concept wasn’t fully absorbed.',
+    'Break the concept into smaller chunks and check in after each one.',
+  ],
+  ENGAGEMENT_DROP: [
+    'Introduce a quick interactive element: a poll, a question, or a live challenge.',
+    'Acknowledge the energy dip openly: “Let’s take a quick stretch break.”',
+    'Change the pace — switch from lecture to a discussion or hands-on activity.',
+    'Share a surprising fact or short story to re-spark curiosity.',
+    'Ask participants to predict what comes next before revealing it.',
+  ],
+  DEFAULT: [
+    'Check in with the room: ask how everyone is following along.',
+    'Pause and invite open questions before continuing.',
+    'Consider summarising the last 5 minutes in 2 sentences.',
   ],
 };
 
-async function fetchHFSuggestion(alertMessage) {
+// ─── HuggingFace Inference API (Tier 1) ──────────────────────────────────────────
+
+async function fetchHFSuggestion(alertType, alertMessage) {
   const key = process.env.HF_API_KEY;
   if (!key) return null;
+
+  // Clean alert type for readability in prompt
+  const typeLabel = alertType.replace(/_/g, ' ').toLowerCase();
+
+  const prompt = [
+    '[INST]',
+    'You are an expert meeting facilitator and engagement coach.',
+    `A real-time alert just fired during a live session: "${typeLabel}"`,
+    `Alert details: "${alertMessage}"`,
+    'Give the host ONE specific, immediately actionable suggestion in under 30 words.',
+    'Be direct. No preamble. No label. Just the suggestion.',
+    '[/INST]',
+  ].join(' ');
+
   try {
-    const prompt = `[INST] You are an expert teaching coach. A live classroom alert just fired:\n"${alertMessage}"\nGive the teacher ONE specific, actionable suggestion in under 30 words. Be direct. No preamble. [/INST]`;
     const res = await fetch(
       'https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2',
       {
         method:  'POST',
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ inputs: prompt, parameters: { max_new_tokens: 60, temperature: 0.7 } }),
-        signal:  AbortSignal.timeout(4000), // 4s timeout — never block an alert
+        headers: {
+          Authorization:  `Bearer ${key}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          inputs:     prompt,
+          parameters: { max_new_tokens: 60, temperature: 0.65, repetition_penalty: 1.1 },
+        }),
+        signal: AbortSignal.timeout(5000), // 5s hard timeout — never block an alert
       }
     );
-    if (!res.ok) return null;
-    const data = await res.json();
-    const text = data?.[0]?.generated_text || '';
-    // Strip the prompt echo that Mistral returns
-    const clean = text.replace(prompt, '').replace(/\[\/?INST\]/g, '').trim();
-    return clean.length > 10 ? clean : null;
-  } catch {
-    return null; // silently fall through to static
+
+    if (!res.ok) {
+      console.warn(`[MentorAgent] HF API returned ${res.status} — falling back to static.`);
+      return null;
+    }
+
+    const data  = await res.json();
+    const text  = data?.[0]?.generated_text || '';
+    // Mistral echoes the prompt — strip everything up to and including [/INST]
+    const clean = text.split('[/INST]').pop()?.replace(/\[\/?INST\]/g, '').trim();
+    return clean && clean.length > 10 ? clean : null;
+  } catch (err) {
+    // Timeout, network error, JSON parse error — all fall through silently
+    console.warn('[MentorAgent] HF call failed:', err.message, '— using static fallback.');
+    return null;
   }
 }
 
+// ─── Static fallback (Tier 2) ────────────────────────────────────────────────────────────
+
 function getStaticSuggestion(type) {
-  const list = STATIC[type] || ['Consider checking in with the room to gauge understanding.'];
-  return list[Math.floor(Math.random() * list.length)];
+  const pool = STATIC[type] || STATIC.DEFAULT;
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
-// Auto-wire: intercept every alert, attach suggestion before it reaches the socket layer
+// ─── Auto-wire: subscribe to ENGAGEMENT_ALERT ────────────────────────────────────────
+// Runs BEFORE server.js’s bus subscriber (socket emit) because bus is FIFO.
+// Mutates payload.suggestion in place — always present by the time frontend receives it.
+// Also marks whether suggestion was AI-generated (used in AlertFeed Phase 5A badge).
+
 bus.subscribe(bus.EVENTS.ENGAGEMENT_ALERT, async (payload) => {
-  // Try HF first (async, non-blocking — static is the guaranteed fallback)
-  const hfSuggestion = await fetchHFSuggestion(payload.message);
-  payload.suggestion = hfSuggestion || getStaticSuggestion(payload.type);
-  analyticsService.logAlert(payload.sessionId, 'MENTOR_SUGGESTION', payload.suggestion);
-  console.log(`[MentorAgent] ${payload.type} → "${payload.suggestion.slice(0, 60)}..."`);
+  const hfSuggestion = await fetchHFSuggestion(payload.type, payload.message);
+
+  payload.suggestion    = hfSuggestion || getStaticSuggestion(payload.type);
+  payload.suggestionAI  = Boolean(hfSuggestion); // true = HF-generated, false = static
+
+  console.log(
+    `[MentorAgent] ${payload.type} → [${payload.suggestionAI ? 'AI' : 'static'}] "${payload.suggestion.slice(0, 70)}..."`
+  );
 });
 
-module.exports = { getStaticSuggestion };
+module.exports = { getStaticSuggestion, fetchHFSuggestion };
