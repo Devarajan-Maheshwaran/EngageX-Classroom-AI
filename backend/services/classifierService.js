@@ -1,49 +1,68 @@
-// classifierService.js — zero-shot engagement intent classifier
-// Model: Xenova/nli-deberta-v3-small (~85MB, runs locally, no API key)
-// Labels: confused | frustrated | excited | engaged
-// Falls back gracefully if model isn't loaded yet
+// classifierService.js — zero-shot intent classification via Transformers.js
+// Model: Xenova/nli-deberta-v3-small (~85MB, downloads once, cached on disk)
+// Labels map to the 5 real engagement states we care about for a meeting
 
-let classifier = null;
-let loading = false;
+let classifier  = null;
+let loadPromise = null;
 
-const LABELS = ['confused', 'frustrated', 'excited', 'engaged'];
+// Engagement states — ordered with most common first for better NLI recall
+const CANDIDATE_LABELS = ['confused', 'engaged', 'excited', 'frustrated', 'bored'];
 
 async function loadModel() {
-  if (classifier || loading) return;
-  loading = true;
-  try {
+  if (classifier) return;
+  if (loadPromise) return loadPromise; // prevent concurrent double-load
+
+  loadPromise = (async () => {
     const { pipeline } = await import('@xenova/transformers');
-    console.log('[Classifier] Loading nli-deberta-v3-small (~85MB)...');
-    classifier = await pipeline('zero-shot-classification', 'Xenova/nli-deberta-v3-small');
-    console.log('[Classifier] Model ready.');
-  } catch (err) {
-    console.error('[Classifier] Failed to load model:', err.message);
-  } finally {
-    loading = false;
-  }
+    console.log('[ClassifierService] Loading nli-deberta-v3-small (~85MB, first run only)...');
+    classifier = await pipeline(
+      'zero-shot-classification',
+      'Xenova/nli-deberta-v3-small'
+    );
+    console.log('[ClassifierService] Model ready.');
+  })();
+
+  return loadPromise;
 }
 
 /**
- * classifyEngagement(text)
- * → { label: 'confused'|'frustrated'|'excited'|'engaged', score: 0-1, all: {...} }
- * Returns null if model not ready yet (non-blocking fallback).
+ * classifyIntent(text)
+ * Returns the dominant engagement intent for a single message.
+ *
+ * @param {string} text
+ * @returns {Promise<{ label: string, score: number, allScores: Object }>}
+ *
+ * Edge cases:
+ * - Text < 4 chars  → instant safe return, no inference
+ * - Model not ready → auto-loads (loadPromise prevents double-load)
+ * - Inference error → safe fallback { label: 'engaged', score: 0.5 }, never throws
  */
-async function classifyEngagement(text) {
-  if (!classifier) {
-    // Model still loading — return a lightweight heuristic fallback
-    const lower = text.toLowerCase();
-    if (/confus|don.?t understand|lost|unclear|what do you mean/i.test(lower)) return { label: 'confused',   score: 0.85, all: {} };
-    if (/frustrat|annoying|stuck|can.?t|ugh|why/i.test(lower))               return { label: 'frustrated', score: 0.80, all: {} };
-    if (/amazing|love|great|excited|wow|nice/i.test(lower))                  return { label: 'excited',    score: 0.80, all: {} };
-    return { label: 'engaged', score: 0.70, all: {} };
+async function classifyIntent(text) {
+  if (!text || text.trim().length < 4) {
+    return { label: 'engaged', score: 0.5, allScores: {} };
   }
-  const result = await classifier(text, LABELS, { multi_label: false });
-  const topIdx = result.scores.indexOf(Math.max(...result.scores));
-  return {
-    label: result.labels[topIdx],
-    score: parseFloat(result.scores[topIdx].toFixed(4)),
-    all:   Object.fromEntries(result.labels.map((l, i) => [l, parseFloat(result.scores[i].toFixed(4))])),
-  };
+
+  try {
+    await loadModel();
+    const result = await classifier(text.trim(), CANDIDATE_LABELS, {
+      multi_label: false, // single dominant label per message
+    });
+
+    // result.labels is already sorted descending by score
+    const allScores = {};
+    result.labels.forEach((l, i) => {
+      allScores[l] = parseFloat(result.scores[i].toFixed(4));
+    });
+
+    return {
+      label: result.labels[0],
+      score: parseFloat(result.scores[0].toFixed(4)),
+      allScores,
+    };
+  } catch (err) {
+    console.error('[ClassifierService] Inference error:', err.message);
+    return { label: 'engaged', score: 0.5, allScores: {} };
+  }
 }
 
-module.exports = { classifyEngagement, loadModel, LABELS };
+module.exports = { loadModel, classifyIntent, CANDIDATE_LABELS };
