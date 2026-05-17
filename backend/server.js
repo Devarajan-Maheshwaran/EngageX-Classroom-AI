@@ -1,7 +1,6 @@
 // server.js — EngageX backend: Express + Socket.IO
-// Phase 3B: engagementService.checkForConfusionSpike() called after every message.
-// Phase 3A: nli-deberta-v3-small classifier runs in parallel with sentiment.
-// Both models warm up sequentially at startup.
+// Phase 4B: input sanitisation, reconnect-aware join, session existence guards,
+//           message length cap, role validation.
 const express    = require('express');
 const http       = require('http');
 const { Server } = require('socket.io');
@@ -13,7 +12,7 @@ const participationService = require('./services/participationService');
 const sentimentService     = require('./services/sentimentService');
 const classifierService    = require('./services/classifierService');
 const analyticsService     = require('./services/analyticsService');
-const engagementService    = require('./services/engagementService'); // Phase 3B
+const engagementService    = require('./services/engagementService');
 const orchestrator         = require('./agents/agentOrchestrator');
 
 const app    = express();
@@ -26,6 +25,9 @@ app.use(cors());
 app.use(express.json());
 
 const activeSessions = new Set();
+
+// Phase 4B: max message length cap — prevents runaway inference on huge pastes
+const MAX_MSG_LEN = parseInt(process.env.MAX_MSG_LEN || '500', 10);
 
 // ─── STARTUP: warm up both AI models sequentially ────────────────────────────────
 (async () => {
@@ -53,50 +55,91 @@ app.post('/api/session/create', (_req, res) => {
 });
 
 app.get('/api/session/:sessionId/summary', (req, res) => {
-  const report = analyticsService.getSessionReport(req.params.sessionId);
+  // Phase 4B: guard against summary requests for sessions that never existed
+  const { sessionId } = req.params;
+  const report = analyticsService.getSessionReport(sessionId);
   res.json(report);
 });
 
-// Room mood endpoint — used by SessionHeader (Phase 5A)
 app.get('/api/session/:sessionId/mood', (req, res) => {
   const mood = engagementService.getRoomMood(req.params.sessionId);
   res.json({ sessionId: req.params.sessionId, mood });
 });
 
+// Phase 4B: session state endpoint — used by debug panel (?debug=1)
+app.get('/api/session/:sessionId/state', (req, res) => {
+  const { sessionId } = req.params;
+  res.json({
+    sessionId,
+    state:      orchestrator.getState(sessionId),
+    cycleCount: orchestrator.getCycleCount(sessionId),
+    active:     activeSessions.has(sessionId),
+  });
+});
+
 // ─── SOCKET.IO ────────────────────────────────────────────────────────────────
 
 io.on('connection', (socket) => {
-  const { role, sessionId, name } = socket.handshake.query;
+  const rawRole      = socket.handshake.query.role      || '';
+  const rawSessionId = socket.handshake.query.sessionId || '';
+  const rawName      = socket.handshake.query.name      || '';
 
-  if (!sessionId) {
+  // Phase 4B: sanitise all query params before use
+  const role      = rawRole.trim().toLowerCase();
+  const sessionId = rawSessionId.trim().toUpperCase().slice(0, 10); // cap at 10 chars
+  const name      = rawName.trim().slice(0, 40) || 'Anonymous';      // cap at 40 chars
+
+  // Phase 4B: validate role
+  if (!['student', 'teacher'].includes(role)) {
+    console.warn(`[Socket] Unknown role "${rawRole}" — disconnecting.`);
+    socket.disconnect();
+    return;
+  }
+
+  // Phase 4B: validate sessionId exists (students/teachers must join a real session)
+  // Teachers creating a session come via REST first, so by the time they connect
+  // via socket the session is already in activeSessions.
+  if (!activeSessions.has(sessionId)) {
+    console.warn(`[Socket] Unknown sessionId "${sessionId}" — disconnecting.`);
+    socket.emit('error:session', { message: 'Session not found. Check your code.' });
     socket.disconnect();
     return;
   }
 
   socket.join(sessionId);
-  socket.data = { role, sessionId, name: name || 'Anonymous' };
+  socket.data = { role, sessionId, name };
 
+  // ── Participant joins (with reconnect detection) ──
   if (role === 'student') {
-    participationService.registerStudent(sessionId, socket.id, name || 'Anonymous');
+    const joinType = participationService.registerStudent(sessionId, socket.id, name);
+
     bus.publish(bus.EVENTS.STUDENT_JOIN, { sessionId, studentId: socket.id, name });
+
+    // Tell everyone in the room about the join/reconnect
     io.to(sessionId).emit('participant:joined', {
       participantId: socket.id,
-      name:          name || 'Anonymous',
+      name,
+      reconnect: joinType === 'restored',
     });
-    console.log(`[Join]  ${name || 'Anonymous'} → session ${sessionId}`);
+
+    // Send the new participant an immediate state snapshot so they
+    // don’t see a blank screen until the next 10s broadcast
+    const snapshot = participationService.getSnapshot(sessionId);
+    socket.emit('room:state', { sessionId, students: snapshot, ts: Date.now() });
+
+    console.log(`[Join]  ${name} → ${sessionId} (${joinType})`);
   }
 
   // ── Core message pipeline ────────────────────────────────────────────────────────
-  // Flow per message:
-  //   1. Run sentiment + classifier in parallel (Promise.allSettled)
-  //   2. Update participationService record (score + lastIntentLabel)
-  //   3. Log to analyticsService (sentimentLog + sliding window)
-  //   4. Publish to eventBus (agents subscribe)
-  //   5. Emit sentiment:update to host dashboard
-  //   6. Check for confusion spike (may emit ENGAGEMENT_ALERT → mentorAgent → socket)
   socket.on('student:message', async ({ text } = {}) => {
-    if (!text || typeof text !== 'string' || text.trim().length === 0) return;
+    // Phase 4B: strict input validation
+    if (!text || typeof text !== 'string') return;
     const trimmed = text.trim();
+    if (trimmed.length === 0)             return;
+    if (trimmed.length > MAX_MSG_LEN) {
+      socket.emit('error:message', { message: `Message too long (max ${MAX_MSG_LEN} chars).` });
+      return;
+    }
 
     const [sentimentResult, intentResult] = await Promise.allSettled([
       sentimentService.analyzeSentiment(trimmed),
@@ -129,7 +172,7 @@ io.on('connection', (socket) => {
 
     io.to(sessionId).emit('sentiment:update', {
       participantId: socket.id,
-      name:          socket.data.name,
+      name,
       text:          trimmed,
       label:         sentiment.label,
       score:         sentiment.score,
@@ -139,32 +182,39 @@ io.on('connection', (socket) => {
       ts:            Date.now(),
     });
 
-    // Phase 3B: check for confusion spike after every message.
-    // Synchronous check — spike detection is purely in-memory (no await needed).
-    // If spike fires, mentorAgent’s bus subscriber attaches suggestion asynchronously
-    // before server.js’s ENGAGEMENT_ALERT subscriber emits to the socket room.
+    // Confusion spike check (synchronous, in-memory)
     engagementService.checkForConfusionSpike(sessionId);
   });
 
+  // ── Host requests immediate snapshot ──
   socket.on('request:state', () => {
     const snapshot = participationService.getSnapshot(sessionId);
     socket.emit('room:state', { sessionId, students: snapshot, ts: Date.now() });
   });
 
+  // ── Host ends session ──
   socket.on('session:end', () => {
-    if (role !== 'teacher') return;
+    if (role !== 'teacher') {
+      socket.emit('error:auth', { message: 'Only the host can end a session.' });
+      return;
+    }
     orchestrator.endSession(sessionId);
     activeSessions.delete(sessionId);
     io.to(sessionId).emit('session:ended', { sessionId });
     console.log(`[Session] Ended: ${sessionId}`);
   });
 
-  socket.on('disconnect', () => {
+  // ── Disconnect ──
+  socket.on('disconnect', (reason) => {
     if (role === 'student') {
-      participationService.removeStudent(sessionId, socket.id);
-      bus.publish(bus.EVENTS.STUDENT_LEAVE, { sessionId, studentId: socket.id });
-      io.to(sessionId).emit('participant:left', { participantId: socket.id });
-      console.log(`[Leave] ${socket.data.name} ← session ${sessionId}`);
+      // Phase 4B: only remove from participation if session is still active.
+      // If session ended first, cleanup already happened in orchestrator.endSession().
+      if (activeSessions.has(sessionId)) {
+        participationService.removeStudent(sessionId, socket.id);
+        bus.publish(bus.EVENTS.STUDENT_LEAVE, { sessionId, studentId: socket.id });
+        io.to(sessionId).emit('participant:left', { participantId: socket.id, name });
+      }
+      console.log(`[Leave] ${name} ← ${sessionId} (${reason})`);
     }
   });
 });
@@ -178,8 +228,7 @@ setInterval(() => {
 }, 10000);
 
 // ─── FORWARD AGENT ALERTS → SOCKET ROOMS ──────────────────────────────────────
-// This subscriber fires AFTER mentorAgent’s subscriber has attached payload.suggestion.
-// So engagement:alert always arrives at the frontend with suggestion + suggestionAI fields.
+// Fires AFTER mentorAgent subscriber — suggestion is always attached.
 bus.subscribe(bus.EVENTS.ENGAGEMENT_ALERT, (payload) => {
   analyticsService.logAlert(
     payload.sessionId,
