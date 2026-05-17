@@ -1,39 +1,35 @@
-// mentorAgent.js — generates intervention suggestions on alert events
-const bus = require('../services/eventBus');
+// mentorAgent.js — attaches actionable suggestions to every engagement alert
+// Phase 3 will replace static map with HuggingFace Inference API
+const bus              = require('../services/eventBus');
 const analyticsService = require('../services/analyticsService');
 
-// Static suggestion map (Phase 3 will replace with local LLM via HF Inference API)
 const SUGGESTIONS = {
-  SILENT_STUDENTS: [
-    'Ask a quick open question like: "Can everyone drop a 1-word reaction to what we just covered?"',
-    'Run a 60-second poll to re-anchor silent students.',
-    'Try a think-pair-share: ask students to type their understanding before you continue.',
+  SILENT_PARTICIPANTS: [
+    'Ask a quick open question: "Drop a 1-word reaction to what we just covered."',
+    'Run a 60-second anonymous poll to re-anchor quiet participants.',
+    'Try think-pair-share: ask everyone to type their understanding before continuing.',
   ],
   PARTICIPATION_IMBALANCE: [
-    'Call on a student by name gently: "[Name], what\'s your take on this?"',
-    'Split into breakout rooms for 5 minutes — quieter students often speak more in small groups.',
-    'Use anonymous response mode: "Type your answer — I won\'t show names, just aggregate."',
+    'Call on a specific participant gently: "[Name], what's your take?"',
+    'Switch to breakout rooms for 5 min — quieter participants open up in smaller groups.',
+    'Use anonymous mode: "Type your answer — I won\'t show names."',
   ],
   CONFUSION_SPIKE: [
-    'Pause and re-explain the last concept with a concrete analogy.',
-    'Live code a minimal example — visual demonstration reduces confusion faster than re-reading.',
-    'Share a quick diagram or whiteboard sketch to reset mental models.',
+    'Pause and re-explain the last concept with a concrete real-world analogy.',
+    'Live-code or sketch a minimal example — visual resets mental models faster.',
+    'Ask the room: "On a scale of 1–5, how clear is this? Reply in chat."',
   ],
 };
 
-function getSuggestion(alertType) {
-  const list = SUGGESTIONS[alertType] || ['Consider checking in with the class.'];
+function getSuggestion(type) {
+  const list = SUGGESTIONS[type] || ['Consider checking in with the room.'];
   return list[Math.floor(Math.random() * list.length)];
 }
 
-// Listen to all alerts and attach a suggestion
+// Auto-wire: attaches suggestion to every alert payload before it reaches the host
 bus.subscribe(bus.EVENTS.ENGAGEMENT_ALERT, (payload) => {
-  const suggestion = getSuggestion(payload.type);
-  payload.suggestion = suggestion;
-  // Re-emit enriched alert (same channel — teacher dashboard will pick this up)
-  // No infinite loop risk: we mutate payload in-place, not re-publish
-  console.log(`[MentorAgent] Suggestion for ${payload.type}: ${suggestion}`);
-  analyticsService.logAlert(payload.sessionId, 'MENTOR_SUGGESTION', suggestion);
+  payload.suggestion = getSuggestion(payload.type);
+  analyticsService.logAlert(payload.sessionId, 'MENTOR_SUGGESTION', payload.suggestion);
 });
 
 module.exports = { getSuggestion };

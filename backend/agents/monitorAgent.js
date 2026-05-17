@@ -1,43 +1,41 @@
-// monitorAgent.js — polls participation every 60s, fires engagement:alert for silent students
-const bus = require('../services/eventBus');
+// monitorAgent.js — polls participation every 60s
+// Fires engagement:alert for participants silent beyond threshold
+const bus                  = require('../services/eventBus');
 const participationService = require('../services/participationService');
-const analyticsService = require('../services/analyticsService');
+const analyticsService     = require('../services/analyticsService');
 
-const SILENT_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
-const POLL_INTERVAL_MS = 60 * 1000;          // 60 seconds
+// 3 min for demo; set SILENT_THRESHOLD_MINS=15 in env for real classroom use
+const SILENT_THRESHOLD_MS = (parseInt(process.env.SILENT_THRESHOLD_MINS, 10) || 3) * 60 * 1000;
+const POLL_INTERVAL_MS    = 60 * 1000;
 
-const timers = new Map(); // sessionId → intervalId
+const timers = new Map();
 
 function start(sessionId) {
   if (timers.has(sessionId)) return;
   const id = setInterval(() => {
     participationService.tick(sessionId);
-    const students = participationService.getSnapshot(sessionId);
-    const silent = students.filter((s) => s.silentDurationMs > SILENT_THRESHOLD_MS);
-    if (silent.length > 0) {
-      const names = silent.map((s) => s.name).join(', ');
-      const alertPayload = {
-        sessionId,
-        type: 'SILENT_STUDENTS',
-        count: silent.length,
-        students: silent.map((s) => ({ id: s.studentId, name: s.name, silentMs: s.silentDurationMs })),
-        message: `${silent.length} student(s) haven't engaged in 15+ minutes: ${names}`,
-      };
-      bus.publish(bus.EVENTS.ENGAGEMENT_ALERT, alertPayload);
-      analyticsService.logAlert(sessionId, 'SILENT_STUDENTS', alertPayload.message);
-    }
+    const all    = participationService.getSnapshot(sessionId);
+    const silent = all.filter((p) => p.silentDurationMs > SILENT_THRESHOLD_MS);
+    if (silent.length === 0) return;
+
+    const names   = silent.map((p) => p.name).join(', ');
+    const payload = {
+      sessionId,
+      type:     'SILENT_PARTICIPANTS',
+      count:    silent.length,
+      students: silent.map((p) => ({ id: p.studentId, name: p.name, silentMs: p.silentDurationMs })),
+      message:  `${silent.length} participant(s) haven't engaged in ${SILENT_THRESHOLD_MS / 60000}+ min: ${names}`,
+    };
+    bus.publish(bus.EVENTS.ENGAGEMENT_ALERT, payload);
+    analyticsService.logAlert(sessionId, 'SILENT_PARTICIPANTS', payload.message);
   }, POLL_INTERVAL_MS);
   timers.set(sessionId, id);
-  console.log(`[MonitorAgent] Started for session ${sessionId}`);
+  console.log(`[MonitorAgent] Started for ${sessionId} (threshold: ${SILENT_THRESHOLD_MS / 60000} min)`);
 }
 
 function stop(sessionId) {
   const id = timers.get(sessionId);
-  if (id) {
-    clearInterval(id);
-    timers.delete(sessionId);
-    console.log(`[MonitorAgent] Stopped for session ${sessionId}`);
-  }
+  if (id) { clearInterval(id); timers.delete(sessionId); }
 }
 
 module.exports = { start, stop };
