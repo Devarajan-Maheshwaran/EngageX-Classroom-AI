@@ -1,6 +1,6 @@
 """
-supabase_service.py — Phase 12 (updated)
-Adds session report persistence helpers.
+supabase_service.py — Phase 13 (updated)
+Adds save_quiz_insights helper.
 """
 
 import os
@@ -86,8 +86,7 @@ class SupabaseService:
                    message: str, fused_score: float) -> dict:
         row = (self._client.table('engagement_alerts')
                .insert({'session_id': session_id, 'student_id': student_id,
-                        'alert_type': alert_type, 'message': message,
-                        'fused_score': fused_score})
+                        'alert_type': alert_type, 'message': message, 'fused_score': fused_score})
                .execute())
         return row.data[0]
 
@@ -141,6 +140,14 @@ class SupabaseService:
                .eq('session_id', session_id)
                .order('created_at', desc=True).execute())
         return res.data or []
+
+    def save_quiz_insights(self, quiz_id: str, insights: dict) -> dict:
+        """Update quizzes row with quiz_insights JSONB field."""
+        row = (self._client.table('quizzes')
+               .update({'quiz_insights': insights})
+               .eq('id', quiz_id)
+               .execute())
+        return row.data[0] if row.data else {}
 
     # ── Reports ───────────────────────────────────────────────────────────────
     def save_session_report(self, session_id: str, report_data: dict) -> dict:

@@ -1,16 +1,13 @@
 /**
- * useTeacherSocket.ts — Phase 10
- *
- * Teacher-side Socket.IO hook.
- * Joins the teacher room and listens for:
- *   - engagement_update : full class snapshot every 15s
- *   - alert             : actionable alert for a specific student
+ * useTeacherSocket.ts — Phase 13 (updated)
+ * Adds quiz_insights event listener.
  */
 
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
+import type { QuizInsights } from '@/components/teacher/QuizInsightsPanel';
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:8000';
 
@@ -39,15 +36,20 @@ export interface AlertEvent {
   timestamp:    string;
 }
 
+export interface QuizInsightEvent {
+  quiz_id:  string;
+  insights: QuizInsights;
+}
+
 export function useTeacherSocket(sessionId: string) {
-  const socketRef    = useRef<Socket | null>(null);
-  const [connected,  setConnected]  = useState(false);
-  const [classState, setClassState] = useState<StudentSnapshot[]>([]);
-  const [alerts,     setAlerts]     = useState<AlertEvent[]>([]);
+  const socketRef      = useRef<Socket | null>(null);
+  const [connected,    setConnected]    = useState(false);
+  const [classState,   setClassState]   = useState<StudentSnapshot[]>([]);
+  const [alerts,       setAlerts]       = useState<AlertEvent[]>([]);
+  const [quizInsights, setQuizInsights] = useState<Record<string, QuizInsights>>({});
 
   useEffect(() => {
     if (!sessionId) return;
-
     const socket = io(BACKEND, { transports: ['websocket'], autoConnect: true });
     socketRef.current = socket;
 
@@ -55,15 +57,11 @@ export function useTeacherSocket(sessionId: string) {
       setConnected(true);
       socket.emit('join_session', { session_id: sessionId, role: 'teacher' });
     });
-
     socket.on('disconnect', () => setConnected(false));
-
-    socket.on('engagement_update', (data: EngagementUpdate) => {
-      setClassState(data.students ?? []);
-    });
-
-    socket.on('alert', (data: AlertEvent) => {
-      setAlerts((prev) => [data, ...prev].slice(0, 20));
+    socket.on('engagement_update', (data: EngagementUpdate) => setClassState(data.students ?? []));
+    socket.on('alert', (data: AlertEvent) => setAlerts((prev) => [data, ...prev].slice(0, 20)));
+    socket.on('quiz_insights', (data: QuizInsightEvent) => {
+      setQuizInsights((prev) => ({ ...prev, [data.quiz_id]: data.insights }));
     });
 
     return () => {
@@ -76,5 +74,5 @@ export function useTeacherSocket(sessionId: string) {
     setAlerts((prev) => prev.filter((_, i) => i !== index));
   }
 
-  return { connected, classState, alerts, dismissAlert };
+  return { connected, classState, alerts, dismissAlert, quizInsights };
 }
