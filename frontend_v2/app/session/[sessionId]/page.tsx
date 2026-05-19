@@ -3,6 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useParams }           from 'next/navigation';
 import { useSessionSocket }    from '@/hooks/useSessionSocket';
+import TextPipeline            from '@/components/student/TextPipeline';
+import ReactionBar             from '@/components/student/ReactionBar';
+import type { TextSignalPayload } from '@/components/student/TextPipeline';
 
 export default function StudentSessionPage() {
   const params    = useParams();
@@ -10,9 +13,10 @@ export default function StudentSessionPage() {
 
   const [studentId,   setStudentId]   = useState('');
   const [studentName, setStudentName] = useState('');
+  const [signalLog,   setSignalLog]   = useState<string[]>([]);
 
   useEffect(() => {
-    setStudentId(sessionStorage.getItem('engagex_student_id')   ?? '');
+    setStudentId(sessionStorage.getItem('engagex_student_id')    ?? '');
     setStudentName(sessionStorage.getItem('engagex_student_name') ?? 'Student');
   }, []);
 
@@ -23,49 +27,54 @@ export default function StudentSessionPage() {
     studentId: studentId,
   });
 
+  function handleSignalSent(s: TextSignalPayload) {
+    const label = s.is_deleted
+      ? `❌ Abandoned: "${s.text.slice(0, 30)}…"`
+      : `✅ Sent: "${s.text.slice(0, 30)}${s.text.length > 30 ? '…' : ''}"`;
+    setSignalLog(prev => [label, ...prev].slice(0, 6));
+  }
+
   return (
-    <main className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4">
-      {/* Connection status */}
-      <div className="flex items-center gap-2 mb-8">
-        <span
-          className={`w-3 h-3 rounded-full ${
-            connected ? 'bg-green-400 animate-pulse' : 'bg-gray-300'
-          }`}
-        />
-        <span className="text-sm text-gray-600">
-          {connected ? `Connected as ${studentName}` : 'Connecting…'}
-        </span>
+    <main className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4 py-8">
+      <div className="flex items-center gap-2 mb-6">
+        <span className={`w-3 h-3 rounded-full ${ connected ? 'bg-green-400 animate-pulse' : 'bg-gray-300' }`} />
+        <span className="text-sm text-gray-600">{connected ? `Connected as ${studentName}` : 'Connecting…'}</span>
       </div>
 
-      {/* Main card */}
-      <div className="bg-white border border-gray-200 rounded-2xl p-8 w-full max-w-md shadow-sm text-center">
-        <div className="w-16 h-16 rounded-full bg-brand-100 flex items-center justify-center text-brand-600 font-bold text-2xl mx-auto mb-4">
-          {studentName.charAt(0).toUpperCase()}
+      <div className="bg-white border border-gray-200 rounded-2xl p-6 w-full max-w-md shadow-sm">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-11 h-11 rounded-full bg-brand-100 flex items-center justify-center text-brand-600 font-bold text-lg">
+            {studentName.charAt(0).toUpperCase()}
+          </div>
+          <div>
+            <p className="font-semibold text-gray-900">{studentName}</p>
+            <p className="text-xs text-gray-400">Engagement is being tracked</p>
+          </div>
         </div>
-        <h2 className="text-xl font-bold text-gray-900 mb-1">{studentName}</h2>
-        <p className="text-sm text-gray-500 mb-6">You are in the session. Your engagement is being tracked.</p>
 
-        {/* Reaction buttons — Phase 5 will wire these to signals */}
-        <div className="flex justify-center gap-3">
-          {[
-            { emoji: '👍', label: 'Got it',   type: 'got_it' },
-            { emoji: '🤔', label: 'Confused', type: 'confused' },
-            { emoji: '✋', label: 'Question', type: 'question' },
-          ].map((r) => (
-            <button
-              key={r.type}
-              className="flex flex-col items-center gap-1 px-4 py-3 bg-gray-50 hover:bg-brand-50 border border-gray-200 hover:border-brand-200 rounded-xl transition-colors"
-              title={r.label}
-            >
-              <span className="text-2xl">{r.emoji}</span>
-              <span className="text-xs text-gray-500">{r.label}</span>
-            </button>
-          ))}
-        </div>
+        {studentId && <ReactionBar sessionId={sessionId} studentId={studentId} />}
+
+        <div className="border-t border-gray-100 my-5" />
+
+        {studentId && (
+          <TextPipeline
+            sessionId={sessionId}
+            studentId={studentId}
+            onSignalSent={handleSignalSent}
+          />
+        )}
+
+        {signalLog.length > 0 && (
+          <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+            <p className="text-xs font-medium text-gray-400 mb-1">Signal log</p>
+            {signalLog.map((entry, i) => (
+              <p key={i} className="text-xs text-gray-500 truncate">{entry}</p>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Quiz widget placeholder — Phase 12 */}
-      <div id="quiz-widget-anchor" />
+      <div id="quiz-widget-anchor" className="mt-4 w-full max-w-md" />
     </main>
   );
 }
