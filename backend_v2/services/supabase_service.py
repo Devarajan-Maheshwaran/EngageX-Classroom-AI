@@ -1,6 +1,6 @@
 """
-supabase_service.py — Phase 13 (updated)
-Adds save_quiz_insights helper.
+supabase_service.py — Phase 14 (updated)
+Adds upload_pdf + save_student_pdf_url helpers.
 """
 
 import os
@@ -121,11 +121,9 @@ class SupabaseService:
                            answer_id: Optional[str], answer_text: Optional[str],
                            is_correct: Optional[bool]) -> dict:
         row = (self._client.table('quiz_responses')
-               .insert({
-                   'quiz_id': quiz_id, 'session_id': session_id,
-                   'student_id': student_id, 'answer_id': answer_id,
-                   'answer_text': answer_text, 'is_correct': is_correct,
-               })
+               .insert({'quiz_id': quiz_id, 'session_id': session_id,
+                        'student_id': student_id, 'answer_id': answer_id,
+                        'answer_text': answer_text, 'is_correct': is_correct})
                .execute())
         return row.data[0]
 
@@ -142,7 +140,6 @@ class SupabaseService:
         return res.data or []
 
     def save_quiz_insights(self, quiz_id: str, insights: dict) -> dict:
-        """Update quizzes row with quiz_insights JSONB field."""
         row = (self._client.table('quizzes')
                .update({'quiz_insights': insights})
                .eq('id', quiz_id)
@@ -161,3 +158,35 @@ class SupabaseService:
                .eq('session_id', session_id)
                .order('created_at', desc=True).limit(1).execute())
         return res.data[0] if res.data else None
+
+    # ── PDF Storage ───────────────────────────────────────────────────────────
+    def upload_pdf(self, session_id: str, student_id: str, pdf_bytes: bytes) -> str:
+        """
+        Upload PDF bytes to Supabase Storage bucket 'engagex-reports'.
+        Returns public URL.
+        """
+        path = f'{session_id}/{student_id}.pdf'
+        bucket = self._client.storage.from_('engagex-reports')
+        try:
+            bucket.remove([path])
+        except Exception:
+            pass
+        bucket.upload(
+            path=path,
+            file=pdf_bytes,
+            file_options={'content-type': 'application/pdf', 'upsert': 'true'},
+        )
+        public = self._client.storage.from_('engagex-reports').get_public_url(path)
+        return public
+
+    def save_student_pdf_url(self, session_id: str, student_id: str, pdf_url: str) -> dict:
+        """Upsert student PDF URL into student_pdf_reports table."""
+        row = (self._client.table('student_pdf_reports')
+               .upsert({'session_id': session_id, 'student_id': student_id, 'pdf_url': pdf_url})
+               .execute())
+        return row.data[0] if row.data else {}
+
+    def get_student_pdf_urls(self, session_id: str) -> list:
+        res = (self._client.table('student_pdf_reports').select('*')
+               .eq('session_id', session_id).execute())
+        return res.data or []

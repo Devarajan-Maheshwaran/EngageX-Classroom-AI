@@ -1,34 +1,31 @@
 """
-routers/report.py — Phase 12
+routers/report.py — Phase 14 (updated)
 
-End-of-session summary report generator.
-
-Routes (prefix /api/report):
-  POST /session-summary  → generate summary JSON for a session
-  GET  /session/{session_id} → fetch last generated report if stored
-
-Output includes:
-  - class average engagement
-  - alert counts and most common alert reason
-  - quiz participation + accuracy
-  - per-student summary cards
-  - timeline buckets for charting on frontend
+Adds:
+  POST /api/report/generate-pdf/{session_id}       → generate all student PDFs, store URLs
+  GET  /api/report/pdf/{session_id}/{student_id}   → stream PDF bytes
+  POST /api/report/session-summary                 → existing summary JSON
+  GET  /api/report/session/{session_id}            → fetch saved report
 """
 
+import io
 import logging
 from collections import Counter
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from services.supabase_service import SupabaseService
+from agents.report_crew import run_report_crew, run_all_students
+from services.pdf_service import generate_pdf
 
 router = APIRouter()
 logger = logging.getLogger('engagex.report')
-_svc = SupabaseService()
+_svc   = SupabaseService()
 
 
 class SessionSummaryRequest(BaseModel):
-    session_id: str
-    limit_per_student: int = 100
+    session_id:         str
+    limit_per_student:  int = 100
 
 
 def _avg(nums: list[float]) -> float | None:
@@ -38,30 +35,10 @@ def _avg(nums: list[float]) -> float | None:
     return round(sum(vals) / len(vals), 2)
 
 
-def _student_timeline(signals: list[dict]) -> list[dict]:
-    """
-    Converts recent signals into simple timeline points.
-    Frontend can plot these directly without extra transformation.
-    """
-    points = []
-    for s in reversed(signals):
-        score = s.get('engagement_score')
-        if score is None:
-            continue
-        points.append({
-            't': str(s.get('created_at', '')),
-            'score': round(float(score), 2),
-            'type': s.get('signal_type', 'unknown'),
-        })
-    return points
-
+# ── Session summary (JSON) ───────────────────────────────────────────────────
 
 @router.post('/session-summary', status_code=status.HTTP_200_OK)
 def generate_session_summary(body: SessionSummaryRequest):
-    """
-    Build a full summary from persisted session data.
-    Also stores the generated report in Supabase for later retrieval.
-    """
     try:
         state = _svc.get_session_state(body.session_id)
         if not state:
@@ -70,122 +47,162 @@ def generate_session_summary(body: SessionSummaryRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f'generate_session_summary get_session_state: {e}')
+        logger.error(f'generate_session_summary: {e}')
         raise HTTPException(500, 'Failed to load session state')
 
-    # Session-wide aggregates
     class_scores: list[float] = []
-    all_alerts = _svc.get_alerts(body.session_id, limit=500)
+    all_alerts  = _svc.get_alerts(body.session_id, limit=500)
     all_quizzes = _svc.list_quizzes(body.session_id)
 
     student_cards = []
     for student in students:
-        sid = student['id']
+        sid  = student['id']
         name = student.get('name', '') or sid[:8]
-
         signals = _svc.get_recent_signals(body.session_id, sid, body.limit_per_student)
         if not signals:
             student_cards.append({
-                'student_id': sid,
-                'student_name': name,
-                'avg_engagement': None,
-                'peak_engagement': None,
-                'low_engagement_count': 0,
-                'alerts_count': 0,
-                'quiz_attempts': 0,
-                'quiz_correct': 0,
-                'quiz_accuracy': None,
-                'dominant_signal': 'none',
-                'timeline': [],
+                'student_id': sid, 'student_name': name,
+                'avg_engagement': None, 'peak_engagement': None,
+                'low_engagement_count': 0, 'alerts_count': 0,
+                'quiz_attempts': 0, 'quiz_correct': 0, 'quiz_accuracy': None,
+                'dominant_signal': 'none', 'timeline': [],
             })
             continue
-
-        scores = [s.get('engagement_score') for s in signals if s.get('engagement_score') is not None]
+        scores    = [s.get('engagement_score') for s in signals if s.get('engagement_score') is not None]
         avg_score = _avg(scores)
-        peak_score = round(max(scores), 2) if scores else None
-        low_count = sum(1 for s in scores if s < 40)
         if avg_score is not None:
             class_scores.append(avg_score)
-
-        # dominant signal type by frequency
-        type_counts = Counter(s.get('signal_type', 'unknown') for s in signals)
+        type_counts     = Counter(s.get('signal_type', 'unknown') for s in signals)
         dominant_signal = type_counts.most_common(1)[0][0] if type_counts else 'none'
-
-        # alerts for this student
-        student_alerts = [a for a in all_alerts if a.get('student_id') == sid]
-
-        # quiz responses for this student across session quizzes
-        quiz_attempts = 0
-        quiz_correct = 0
+        student_alerts  = [a for a in all_alerts if a.get('student_id') == sid]
+        q_attempts = q_correct = 0
         for q in all_quizzes:
             resps = _svc.get_quiz_responses(q['id'])
-            mine = [r for r in resps if r.get('student_id') == sid]
+            mine  = [r for r in resps if r.get('student_id') == sid]
             if mine:
-                quiz_attempts += len(mine)
-                quiz_correct += sum(1 for r in mine if r.get('is_correct') is True)
-
-        quiz_accuracy = round((quiz_correct / quiz_attempts) * 100, 2) if quiz_attempts else None
-
+                q_attempts += len(mine)
+                q_correct  += sum(1 for r in mine if r.get('is_correct') is True)
         student_cards.append({
-            'student_id': sid,
-            'student_name': name,
-            'avg_engagement': avg_score,
-            'peak_engagement': peak_score,
-            'low_engagement_count': low_count,
-            'alerts_count': len(student_alerts),
-            'quiz_attempts': quiz_attempts,
-            'quiz_correct': quiz_correct,
-            'quiz_accuracy': quiz_accuracy,
-            'dominant_signal': dominant_signal,
-            'timeline': _student_timeline(signals),
+            'student_id':         sid,
+            'student_name':       name,
+            'avg_engagement':     avg_score,
+            'peak_engagement':    round(max(scores), 2) if scores else None,
+            'low_engagement_count': sum(1 for s in scores if s < 40),
+            'alerts_count':       len(student_alerts),
+            'quiz_attempts':      q_attempts,
+            'quiz_correct':       q_correct,
+            'quiz_accuracy':      round(q_correct/q_attempts*100, 2) if q_attempts else None,
+            'dominant_signal':    dominant_signal,
+            'timeline':           [{
+                't': str(s.get('created_at','')),
+                'score': round(float(s['engagement_score']),2),
+                'type': s.get('signal_type',''),
+            } for s in reversed(signals) if s.get('engagement_score') is not None],
         })
 
-    # Session metrics
-    class_avg_engagement = _avg(class_scores)
-    alert_reason_counts = Counter(a.get('message', '') for a in all_alerts if a.get('message'))
-    most_common_alert_reason = alert_reason_counts.most_common(1)[0][0] if alert_reason_counts else None
-
-    total_quiz_responses = 0
-    total_correct = 0
+    alert_reason_counts = Counter(a.get('message','') for a in all_alerts if a.get('message'))
+    total_quiz_responses = total_correct = 0
     for q in all_quizzes:
         resps = _svc.get_quiz_responses(q['id'])
         total_quiz_responses += len(resps)
-        total_correct += sum(1 for r in resps if r.get('is_correct') is True)
-
-    overall_quiz_accuracy = round((total_correct / total_quiz_responses) * 100, 2) if total_quiz_responses else None
+        total_correct        += sum(1 for r in resps if r.get('is_correct') is True)
 
     report = {
-        'session_id': body.session_id,
-        'session_title': state.get('title', 'Untitled Session'),
-        'student_count': len(students),
-        'class_avg_engagement': class_avg_engagement,
-        'alerts_total': len(all_alerts),
-        'alerts_watch': sum(1 for a in all_alerts if a.get('alert_type') == 'watch'),
-        'alerts_intervene': sum(1 for a in all_alerts if a.get('alert_type') == 'intervene'),
-        'most_common_alert_reason': most_common_alert_reason,
-        'quiz_count': len(all_quizzes),
-        'quiz_total_responses': total_quiz_responses,
-        'overall_quiz_accuracy': overall_quiz_accuracy,
-        'students': student_cards,
+        'session_id':            body.session_id,
+        'session_title':         state.get('title', 'Untitled Session'),
+        'student_count':         len(students),
+        'class_avg_engagement':  _avg(class_scores),
+        'alerts_total':          len(all_alerts),
+        'alerts_watch':          sum(1 for a in all_alerts if a.get('alert_type')=='watch'),
+        'alerts_intervene':      sum(1 for a in all_alerts if a.get('alert_type')=='intervene'),
+        'most_common_alert_reason': alert_reason_counts.most_common(1)[0][0] if alert_reason_counts else None,
+        'quiz_count':            len(all_quizzes),
+        'quiz_total_responses':  total_quiz_responses,
+        'overall_quiz_accuracy': round(total_correct/total_quiz_responses*100,2) if total_quiz_responses else None,
+        'students':              student_cards,
     }
-
     try:
         _svc.save_session_report(body.session_id, report)
     except Exception as e:
         logger.warning(f'save_session_report failed: {e}')
-
     return report
 
 
 @router.get('/session/{session_id}', status_code=status.HTTP_200_OK)
 def get_saved_report(session_id: str):
     try:
-        report = _svc.get_latest_session_report(session_id)
-        if not report:
-            raise HTTPException(404, 'No saved report found for this session')
-        return report
+        r = _svc.get_latest_session_report(session_id)
+        if not r:
+            raise HTTPException(404, 'No saved report found')
+        return r
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f'get_saved_report: {e}')
-        raise HTTPException(500, 'Failed to fetch report')
+        raise HTTPException(500, str(e))
+
+
+# ── PDF endpoints ────────────────────────────────────────────────────────────
+
+@router.post('/generate-pdf/{session_id}', status_code=status.HTTP_200_OK)
+def generate_all_pdfs(session_id: str):
+    """
+    Generate PDFs for all students in a session.
+    Stores PDF bytes in Supabase Storage and records the URL in session_reports.
+    Returns list of { student_id, student_name, pdf_url }.
+    """
+    try:
+        state = _svc.get_session_state(session_id)
+        if not state:
+            raise HTTPException(404, 'Session not found')
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+    session_title = state.get('title', 'EngageX Session')
+    results  = []
+    students = run_all_students(session_id)
+
+    for rpt in students:
+        try:
+            pdf_bytes = generate_pdf(rpt, session_title)
+            url = _svc.upload_pdf(
+                session_id=session_id,
+                student_id=rpt.student_id,
+                pdf_bytes=pdf_bytes,
+            )
+            _svc.save_student_pdf_url(session_id, rpt.student_id, url)
+            results.append({'student_id': rpt.student_id, 'student_name': rpt.student_name, 'pdf_url': url})
+            logger.info(f'[Report] PDF generated student={rpt.student_id[:8]}')
+        except Exception as e:
+            logger.error(f'PDF gen student={rpt.student_id[:8]}: {e}')
+            results.append({'student_id': rpt.student_id, 'student_name': rpt.student_name, 'pdf_url': None, 'error': str(e)})
+
+    return {'session_id': session_id, 'reports': results}
+
+
+@router.get('/pdf/{session_id}/{student_id}', status_code=status.HTTP_200_OK)
+def stream_pdf(session_id: str, student_id: str):
+    """
+    Stream PDF bytes directly to the browser.
+    Regenerates on-the-fly; no storage required for single downloads.
+    """
+    try:
+        state = _svc.get_session_state(session_id)
+        if not state:
+            raise HTTPException(404, 'Session not found')
+        session_title = state.get('title', 'EngageX Session')
+        rpt       = run_report_crew(session_id, student_id)
+        pdf_bytes = generate_pdf(rpt, session_title)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f'stream_pdf: {e}')
+        raise HTTPException(500, f'PDF generation failed: {e}')
+
+    filename = f'engagex_{student_id[:8]}_report.pdf'
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type='application/pdf',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
