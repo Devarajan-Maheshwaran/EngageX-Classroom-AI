@@ -16,28 +16,31 @@ export default function StudentSessionPage() {
   const [signalLog,   setSignalLog]   = useState<string[]>([]);
 
   useEffect(() => {
-    setStudentId(sessionStorage.getItem('engagex_student_id')    ?? '');
+    setStudentId(sessionStorage.getItem('engagex_student_id') ?? '');
     setStudentName(sessionStorage.getItem('engagex_student_name') ?? 'Student');
   }, []);
 
   const { connected } = useSessionSocket({
     sessionId,
-    role:      'student',
-    name:      studentName,
-    studentId: studentId,
+    role: 'student',
+    name: studentName,
+    studentId,
   });
 
   function handleSignalSent(s: TextSignalPayload) {
-    const label = s.is_deleted
-      ? `❌ Abandoned: "${s.text.slice(0, 30)}…"`
-      : `✅ Sent: "${s.text.slice(0, 30)}${s.text.length > 30 ? '…' : ''}"`;
-    setSignalLog(prev => [label, ...prev].slice(0, 6));
+    const parts = [
+      s.is_deleted ? '❌' : '✅',
+      s.intent ? `[${s.intent}]` : '',
+      typeof s.engagement_score === 'number' ? `score:${Math.round(s.engagement_score)}` : '',
+      `"${s.text.slice(0, 24)}${s.text.length > 24 ? '…' : ''}"`,
+    ].filter(Boolean);
+    setSignalLog((prev) => [parts.join(' '), ...prev].slice(0, 6));
   }
 
   return (
     <main className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4 py-8">
       <div className="flex items-center gap-2 mb-6">
-        <span className={`w-3 h-3 rounded-full ${ connected ? 'bg-green-400 animate-pulse' : 'bg-gray-300' }`} />
+        <span className={`w-3 h-3 rounded-full ${connected ? 'bg-green-400 animate-pulse' : 'bg-gray-300'}`} />
         <span className="text-sm text-gray-600">{connected ? `Connected as ${studentName}` : 'Connecting…'}</span>
       </div>
 

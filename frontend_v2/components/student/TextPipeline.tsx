@@ -1,31 +1,26 @@
 /**
- * TextPipeline.tsx — Phase 5
+ * TextPipeline.tsx — Phase 6
  *
- * Captures ALL student text interactions:
- *   - Sent messages (text + metadata)
- *   - DELETED messages (typed but never sent — highest-value signal)
- *   - Behavioral metrics: edit count, silence duration, participation frequency
- *
- * Phase 6 adds Transformers.js NLP on top; this phase sends raw signals only.
- *
- * Usage:
- *   <TextPipeline sessionId={...} studentId={...} />
+ * Adds browser-side NLP on top of Phase 5 behavior capture.
+ * For every sent or abandoned message, we compute:
+ * - sentiment
+ * - intent
+ * - engagement_score
+ * Then send the enriched signal to backend.
  */
 
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { useNLP } from '@/hooks/useNLP';
 
 const API = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:8000';
-
-// If user types but doesn't send within this window → abandoned signal
 const ABANDON_TIMEOUT_MS = 8000;
-// Participation frequency sliding window
 const FREQ_WINDOW_MS = 10 * 60 * 1000;
 
 interface TextPipelineProps {
-  sessionId:    string;
-  studentId:    string;
+  sessionId: string;
+  studentId: string;
   onSignalSent?: (signal: TextSignalPayload) => void;
 }
 
@@ -37,7 +32,6 @@ export interface TextSignalPayload {
   edit_count:          number;
   silence_duration_ms: number;
   participation_freq:  number;
-  // NLP fields — filled by Phase 6
   sentiment?:          string;
   sentiment_score?:    number;
   intent?:             string;
@@ -58,37 +52,68 @@ async function sendSignal(payload: TextSignalPayload): Promise<void> {
 }
 
 export default function TextPipeline({ sessionId, studentId, onSignalSent }: TextPipelineProps) {
-  const [text,   setText]   = useState('');
-  const [status, setStatus] = useState<'idle' | 'sent'>('idle');
+  const { ready, loading, error, classify } = useNLP();
+  const [text, setText] = useState('');
+  const [status, setStatus] = useState<'idle' | 'analyzing' | 'sent'>('idle');
 
-  const editCountRef      = useRef(0);
-  const lastSentAtRef     = useRef<number>(Date.now());
-  const msgTimestamps     = useRef<number[]>([]);
-  const abandonTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const prevTextRef       = useRef('');
+  const editCountRef = useRef(0);
+  const lastSentAtRef = useRef<number>(Date.now());
+  const msgTimestamps = useRef<number[]>([]);
+  const abandonTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevTextRef = useRef('');
 
-  function getSilenceMs()  { return Date.now() - lastSentAtRef.current; }
+  function getSilenceMs() {
+    return Date.now() - lastSentAtRef.current;
+  }
 
   function recordAndGetFreq(): number {
     const now = Date.now();
     msgTimestamps.current.push(now);
-    msgTimestamps.current = msgTimestamps.current.filter(t => now - t <= FREQ_WINDOW_MS);
+    msgTimestamps.current = msgTimestamps.current.filter((t) => now - t <= FREQ_WINDOW_MS);
     return msgTimestamps.current.length;
   }
 
-  const fireAbandoned = useCallback((partialText: string, editCount: number) => {
+  const enrichSignal = useCallback(async (base: TextSignalPayload): Promise<TextSignalPayload> => {
+    if (!ready) return base;
+    try {
+      const nlp = await classify(base.text, {
+        isDeleted: base.is_deleted,
+        editCount: base.edit_count,
+        silenceDurationMs: base.silence_duration_ms,
+        participationFreq: base.participation_freq,
+      });
+      return {
+        ...base,
+        sentiment: nlp.sentiment,
+        sentiment_score: nlp.sentiment_score,
+        intent: nlp.intent,
+        intent_scores: nlp.intent_scores,
+        engagement_score: nlp.engagement_score,
+      };
+    } catch (err) {
+      console.warn('[TextPipeline] NLP enrich failed:', err);
+      return base;
+    }
+  }, [ready, classify]);
+
+  const fireAbandoned = useCallback(async (partialText: string, editCount: number) => {
     if (!partialText.trim()) return;
-    const payload: TextSignalPayload = {
-      session_id: sessionId, student_id: studentId,
-      text: partialText, is_deleted: true,
+    const base: TextSignalPayload = {
+      session_id: sessionId,
+      student_id: studentId,
+      text: partialText,
+      is_deleted: true,
       edit_count: editCount,
       silence_duration_ms: getSilenceMs(),
-      participation_freq:  msgTimestamps.current.length,
+      participation_freq: msgTimestamps.current.length,
     };
-    sendSignal(payload);
+    setStatus('analyzing');
+    const payload = await enrichSignal(base);
+    await sendSignal(payload);
     onSignalSent?.(payload);
-    console.log('[TextPipeline] deleted-msg signal:', partialText.slice(0, 40));
-  }, [sessionId, studentId, onSignalSent]);
+    setStatus('sent');
+    setTimeout(() => setStatus('idle'), 1200);
+  }, [sessionId, studentId, enrichSignal, onSignalSent]);
 
   function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const val = e.target.value;
@@ -98,11 +123,11 @@ export default function TextPipeline({ sessionId, studentId, onSignalSent }: Tex
 
     if (abandonTimerRef.current) clearTimeout(abandonTimerRef.current);
     if (val.trim().length > 0) {
-      abandonTimerRef.current = setTimeout(() => {
-        fireAbandoned(val, editCountRef.current);
+      abandonTimerRef.current = setTimeout(async () => {
+        await fireAbandoned(val, editCountRef.current);
         setText('');
         editCountRef.current = 0;
-        prevTextRef.current  = '';
+        prevTextRef.current = '';
       }, ABANDON_TIMEOUT_MS);
     }
   }
@@ -110,33 +135,56 @@ export default function TextPipeline({ sessionId, studentId, onSignalSent }: Tex
   async function handleSend(e?: React.FormEvent) {
     e?.preventDefault();
     if (!text.trim()) return;
-    if (abandonTimerRef.current) { clearTimeout(abandonTimerRef.current); abandonTimerRef.current = null; }
+    if (abandonTimerRef.current) {
+      clearTimeout(abandonTimerRef.current);
+      abandonTimerRef.current = null;
+    }
 
-    const payload: TextSignalPayload = {
-      session_id: sessionId, student_id: studentId,
-      text: text.trim(), is_deleted: false,
-      edit_count:          editCountRef.current,
+    const base: TextSignalPayload = {
+      session_id: sessionId,
+      student_id: studentId,
+      text: text.trim(),
+      is_deleted: false,
+      edit_count: editCountRef.current,
       silence_duration_ms: getSilenceMs(),
-      participation_freq:  recordAndGetFreq(),
+      participation_freq: recordAndGetFreq(),
     };
 
-    setText(''); editCountRef.current = 0; prevTextRef.current = '';
+    setText('');
+    editCountRef.current = 0;
+    prevTextRef.current = '';
     lastSentAtRef.current = Date.now();
 
+    setStatus('analyzing');
+    const payload = await enrichSignal(base);
     await sendSignal(payload);
     onSignalSent?.(payload);
     setStatus('sent');
-    setTimeout(() => setStatus('idle'), 1500);
+    setTimeout(() => setStatus('idle'), 1200);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
   }
 
-  useEffect(() => () => { if (abandonTimerRef.current) clearTimeout(abandonTimerRef.current); }, []);
+  useEffect(() => {
+    return () => {
+      if (abandonTimerRef.current) clearTimeout(abandonTimerRef.current);
+    };
+  }, []);
 
   return (
     <div className="w-full">
+      <div className="flex items-center justify-between mb-2 px-1">
+        <p className="text-xs text-gray-400">
+          {loading ? 'Loading on-device NLP models…' : ready ? 'On-device NLP active' : 'Behavior-only mode'}
+        </p>
+        {error && <p className="text-xs text-amber-500 truncate max-w-[180px]">{error}</p>}
+      </div>
+
       <form onSubmit={handleSend} className="flex gap-2 items-end">
         <div className="flex-1 relative">
           <textarea
@@ -154,10 +202,10 @@ export default function TextPipeline({ sessionId, studentId, onSignalSent }: Tex
         </div>
         <button
           type="submit"
-          disabled={!text.trim()}
+          disabled={!text.trim() || status === 'analyzing'}
           className="px-4 py-3 bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white rounded-xl font-medium text-sm transition-colors"
         >
-          {status === 'sent' ? '✓' : 'Send'}
+          {status === 'analyzing' ? 'Analyzing…' : status === 'sent' ? '✓' : 'Send'}
         </button>
       </form>
       <p className="text-xs text-gray-400 mt-1 ml-1">Shift+Enter for new line · Enter to send</p>
