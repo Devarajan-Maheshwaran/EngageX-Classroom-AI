@@ -1,0 +1,34 @@
+# EngageX v2 backend dependencies
+# Install: pip install -r requirements.txt
+
+# Web framework + async server
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9       # for file upload (audio chunks)
+
+# Socket.IO
+python-socketio==5.11.2
+aiohttp==3.9.5                # async HTTP adapter used by python-socketio
+
+# Database
+supabase==2.4.2
+python-dotenv==1.0.1
+
+# LLM / Agent framework (added now, used in Phase 10+)
+groq==0.9.0
+crewai==0.80.0
+crewai-tools==0.12.0
+
+# Audio processing (Phase 8-9)
+faster-whisper==1.0.3
+librosa==0.10.2
+soundfile==0.12.1
+
+# PDF generation (Phase 14)
+reportlab==4.2.0
+matplotlib==3.9.0
+
+# Utilities
+pydantic==2.7.1
+httpx==0.27.0                 # async HTTP client for internal calls
+redis==5.0.4                  # Upstash Redis client
