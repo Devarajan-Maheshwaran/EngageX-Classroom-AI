@@ -1,5 +1,6 @@
 """
-main.py — EngageX v2 Backend — Phase 11
+main.py — EngageX v2 Backend — Phase 12
+Adds report router.
 """
 
 import asyncio
@@ -10,8 +11,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-from routers import sessions, signals, aggregation, quiz
-from socket_manager           import sio
+from routers import sessions, signals, aggregation, quiz, report
+from socket_manager import sio
 from services.polling_service import polling_loop
 
 load_dotenv()
@@ -52,6 +53,7 @@ fastapi_app.include_router(sessions.router,    prefix='/api/sessions',   tags=['
 fastapi_app.include_router(signals.router,     prefix='/api/signals',    tags=['Signals'])
 fastapi_app.include_router(aggregation.router, prefix='/api/aggregate',  tags=['Aggregation'])
 fastapi_app.include_router(quiz.router,        prefix='/api/quiz',       tags=['Quiz'])
+fastapi_app.include_router(report.router,      prefix='/api/report',     tags=['Report'])
 
 @fastapi_app.get('/health', tags=['Health'])
 async def health():

@@ -1,6 +1,6 @@
 """
-supabase_service.py — Phase 11 (updated)
-Adds quiz CRUD methods.
+supabase_service.py — Phase 12 (updated)
+Adds session report persistence helpers.
 """
 
 import os
@@ -20,7 +20,6 @@ class SupabaseService:
         self._client: Client = create_client(url, key)
 
     # ── Sessions ──────────────────────────────────────────────────────────────
-
     def create_session(self, teacher_id: str, title: str, code: str) -> dict:
         row = (self._client.table('sessions')
                .insert({'teacher_id': teacher_id, 'title': title, 'code': code, 'status': 'active'})
@@ -67,7 +66,6 @@ class SupabaseService:
         return res.data[0]
 
     # ── Signals ───────────────────────────────────────────────────────────────
-
     def save_signal(self, session_id: str, student_id: str, signal_type: str,
                     signal_data: dict, engagement_score: Optional[float] = None) -> dict:
         row = (self._client.table('student_signals')
@@ -84,7 +82,6 @@ class SupabaseService:
         return res.data or []
 
     # ── Alerts ────────────────────────────────────────────────────────────────
-
     def save_alert(self, session_id: str, student_id: str, alert_type: str,
                    message: str, fused_score: float) -> dict:
         row = (self._client.table('engagement_alerts')
@@ -101,7 +98,6 @@ class SupabaseService:
         return res.data or []
 
     # ── Quiz ──────────────────────────────────────────────────────────────────
-
     def create_quiz(self, session_id: str, teacher_id: str, question: str,
                     quiz_type: str, options: list, correct_id: Optional[str],
                     duration_s: int) -> dict:
@@ -145,3 +141,16 @@ class SupabaseService:
                .eq('session_id', session_id)
                .order('created_at', desc=True).execute())
         return res.data or []
+
+    # ── Reports ───────────────────────────────────────────────────────────────
+    def save_session_report(self, session_id: str, report_data: dict) -> dict:
+        row = (self._client.table('session_reports')
+               .insert({'session_id': session_id, 'report_data': report_data})
+               .execute())
+        return row.data[0]
+
+    def get_latest_session_report(self, session_id: str) -> Optional[dict]:
+        res = (self._client.table('session_reports').select('*')
+               .eq('session_id', session_id)
+               .order('created_at', desc=True).limit(1).execute())
+        return res.data[0] if res.data else None

@@ -1,18 +1,19 @@
 /**
- * Teacher Dashboard — Phase 11
- * Adds QuizLauncher to sidebar alongside AlertFeed.
+ * Teacher Dashboard — Phase 12
+ * Adds SessionSummaryPanel below engagement grid.
  */
 
 'use client';
 
-import { useParams }            from 'next/navigation';
-import { useTeacherSocket }     from '@/hooks/useTeacherSocket';
-import ClassEngagementGrid      from '@/components/teacher/ClassEngagementGrid';
-import AlertFeed                from '@/components/teacher/AlertFeed';
-import QuizLauncher             from '@/components/teacher/QuizLauncher';
+import { useParams } from 'next/navigation';
+import { useTeacherSocket } from '@/hooks/useTeacherSocket';
+import ClassEngagementGrid from '@/components/teacher/ClassEngagementGrid';
+import AlertFeed from '@/components/teacher/AlertFeed';
+import QuizLauncher from '@/components/teacher/QuizLauncher';
+import SessionSummaryPanel from '@/components/teacher/SessionSummaryPanel';
 
 export default function TeacherDashboard() {
-  const params    = useParams();
+  const params = useParams();
   const sessionId = params.sessionId as string;
   const teacherId = typeof window !== 'undefined'
     ? (sessionStorage.getItem('engagex_teacher_id') ?? 'teacher')
@@ -20,11 +21,11 @@ export default function TeacherDashboard() {
 
   const { connected, classState, alerts, dismissAlert } = useTeacherSocket(sessionId);
 
-  const avgScore     = classState.length
+  const avgScore = classState.length
     ? Math.round(classState.reduce((s, x) => s + x.fused_score, 0) / classState.length)
     : null;
   const criticalCount = classState.filter((s) => s.alert_level === 'intervene').length;
-  const watchCount    = classState.filter((s) => s.alert_level === 'watch').length;
+  const watchCount = classState.filter((s) => s.alert_level === 'watch').length;
 
   return (
     <main className="min-h-screen bg-gray-50">
@@ -48,34 +49,36 @@ export default function TeacherDashboard() {
             </span>
           )}
           <div className="flex items-center gap-1.5">
-            <span className={`w-2.5 h-2.5 rounded-full ${ connected ? 'bg-green-400 animate-pulse' : 'bg-gray-300' }`} />
+            <span className={`w-2.5 h-2.5 rounded-full ${connected ? 'bg-green-400 animate-pulse' : 'bg-gray-300'}`} />
             <span className="text-gray-500">{connected ? 'Live' : 'Connecting…'}</span>
           </div>
         </div>
       </header>
 
       <div className="max-w-7xl mx-auto px-6 py-6 grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
-        <section>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-gray-800">
-              Students
-              {classState.length > 0 && (
-                <span className="ml-2 text-xs font-normal text-gray-400">{classState.length} connected</span>
-              )}
-            </h2>
-            <span className="text-xs text-gray-400">Updated every 15s</span>
+        <section className="space-y-6">
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-semibold text-gray-800">
+                Students
+                {classState.length > 0 && (
+                  <span className="ml-2 text-xs font-normal text-gray-400">{classState.length} connected</span>
+                )}
+              </h2>
+              <span className="text-xs text-gray-400">Updated every 15s</span>
+            </div>
+            <ClassEngagementGrid students={classState} sessionId={sessionId} />
           </div>
-          <ClassEngagementGrid students={classState} sessionId={sessionId} />
+
+          <SessionSummaryPanel sessionId={sessionId} />
         </section>
 
         <aside className="space-y-6">
-          {/* Quiz launcher */}
           <div>
             <h2 className="text-base font-semibold text-gray-800 mb-1">Quiz / Poll</h2>
             <QuizLauncher sessionId={sessionId} teacherId={teacherId} />
           </div>
 
-          {/* Alert feed */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <h2 className="text-base font-semibold text-gray-800">Alerts</h2>
