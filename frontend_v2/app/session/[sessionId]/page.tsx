@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useState }     from 'react';
-import { useParams }               from 'next/navigation';
-import { useSessionSocket }        from '@/hooks/useSessionSocket';
-import TextPipeline                from '@/components/student/TextPipeline';
-import ReactionBar                 from '@/components/student/ReactionBar';
-import VisionPipelineComponent     from '@/components/student/VisionPipeline';
-import type { TextSignalPayload }  from '@/components/student/TextPipeline';
+import { useEffect, useState }         from 'react';
+import { useParams }                   from 'next/navigation';
+import { useSessionSocket }            from '@/hooks/useSessionSocket';
+import TextPipeline                    from '@/components/student/TextPipeline';
+import ReactionBar                     from '@/components/student/ReactionBar';
+import VisionPipelineComponent         from '@/components/student/VisionPipeline';
+import AudioPipelineComponent          from '@/components/student/AudioPipeline';
+import type { TextSignalPayload }      from '@/components/student/TextPipeline';
 
 export default function StudentSessionPage() {
   const params    = useParams();
@@ -28,7 +29,7 @@ export default function StudentSessionPage() {
   function handleSignalSent(s: TextSignalPayload) {
     const parts = [
       s.is_deleted ? '❌' : '✅',
-      s.intent ? `[${s.intent}]` : '',
+      s.intent   ? `[${s.intent}]` : '',
       typeof s.engagement_score === 'number' ? `score:${Math.round(s.engagement_score)}` : '',
       `"${s.text.slice(0, 24)}${s.text.length > 24 ? '…' : ''}"`,
     ].filter(Boolean);
@@ -50,12 +51,17 @@ export default function StudentSessionPage() {
           </div>
           <div>
             <p className="font-semibold text-gray-900">{studentName}</p>
-            <p className="text-xs text-gray-400">Engagement is being tracked</p>
+            <p className="text-xs text-gray-400">Multimodal engagement tracking active</p>
           </div>
         </div>
 
-        {/* Vision pipeline */}
+        {/* Camera */}
         {studentId && <VisionPipelineComponent sessionId={sessionId} studentId={studentId} />}
+
+        <div className="border-t border-gray-100" />
+
+        {/* Microphone */}
+        {studentId && <AudioPipelineComponent sessionId={sessionId} studentId={studentId} />}
 
         <div className="border-t border-gray-100" />
 
@@ -69,7 +75,7 @@ export default function StudentSessionPage() {
           <TextPipeline sessionId={sessionId} studentId={studentId} onSignalSent={handleSignalSent} />
         )}
 
-        {/* Debug signal log */}
+        {/* Signal log */}
         {signalLog.length > 0 && (
           <div className="p-3 bg-gray-50 rounded-lg">
             <p className="text-xs font-medium text-gray-400 mb-1">Signal log</p>
