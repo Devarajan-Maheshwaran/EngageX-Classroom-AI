@@ -1,6 +1,5 @@
 """
-main.py — EngageX v2 Backend — Phase 10
-FastAPI + python-socketio ASGI app with lifespan polling loop.
+main.py — EngageX v2 Backend — Phase 11
 """
 
 import asyncio
@@ -11,8 +10,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-from routers import sessions, signals, aggregation
-from socket_manager      import sio
+from routers import sessions, signals, aggregation, quiz
+from socket_manager           import sio
 from services.polling_service import polling_loop
 
 load_dotenv()
@@ -52,6 +51,7 @@ fastapi_app.add_middleware(
 fastapi_app.include_router(sessions.router,    prefix='/api/sessions',   tags=['Sessions'])
 fastapi_app.include_router(signals.router,     prefix='/api/signals',    tags=['Signals'])
 fastapi_app.include_router(aggregation.router, prefix='/api/aggregate',  tags=['Aggregation'])
+fastapi_app.include_router(quiz.router,        prefix='/api/quiz',       tags=['Quiz'])
 
 @fastapi_app.get('/health', tags=['Health'])
 async def health():
