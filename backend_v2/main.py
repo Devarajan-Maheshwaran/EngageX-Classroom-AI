@@ -1,26 +1,39 @@
 """
-main.py — EngageX v2 Backend Entry Point
-FastAPI + python-socketio ASGI app.
-
-Run from inside backend_v2/:
-    uvicorn main:app --reload --port 8000
+main.py — EngageX v2 Backend — Phase 10
+FastAPI + python-socketio ASGI app with lifespan polling loop.
 """
 
+import asyncio
 import os
 import socketio
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from routers import sessions, signals, aggregation
-from socket_manager import sio
+from socket_manager      import sio
+from services.polling_service import polling_loop
 
 load_dotenv()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(polling_loop())
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
 
 fastapi_app = FastAPI(
     title='EngageX API v2',
     description='Agentic AI backend for real-time classroom engagement',
     version='2.0.0',
+    lifespan=lifespan,
 )
 
 fastapi_app.add_middleware(
