@@ -1,6 +1,6 @@
 """
-main.py — EngageX v2 Backend — Phase 12
-Adds report router.
+main.py — EngageX v2 Backend — Phase 15
+Adds RateLimitMiddleware + CORS polish.
 """
 
 import asyncio
@@ -14,8 +14,15 @@ from dotenv import load_dotenv
 from routers import sessions, signals, aggregation, quiz, report
 from socket_manager import sio
 from services.polling_service import polling_loop
+from middleware.rate_limiter import RateLimitMiddleware
 
 load_dotenv()
+
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.getenv('CORS_ORIGINS', 'http://localhost:3000').split(',')
+    if o.strip()
+]
 
 
 @asynccontextmanager
@@ -36,14 +43,10 @@ fastapi_app = FastAPI(
     lifespan=lifespan,
 )
 
+fastapi_app.add_middleware(RateLimitMiddleware)
 fastapi_app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        os.getenv('FRONTEND_URL', 'http://localhost:3000'),
-        'https://*.vercel.app',
-        'http://localhost:3000',
-        'http://localhost:3001',
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=['*'],
     allow_headers=['*'],
@@ -55,9 +58,11 @@ fastapi_app.include_router(aggregation.router, prefix='/api/aggregate',  tags=['
 fastapi_app.include_router(quiz.router,        prefix='/api/quiz',       tags=['Quiz'])
 fastapi_app.include_router(report.router,      prefix='/api/report',     tags=['Report'])
 
+
 @fastapi_app.get('/health', tags=['Health'])
 async def health():
     return {'status': 'ok', 'version': '2.0.0'}
+
 
 app = socketio.ASGIApp(
     socketio_server=sio,

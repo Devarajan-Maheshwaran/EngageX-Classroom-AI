@@ -1,90 +1,108 @@
+/**
+ * Student session page — Phase 15
+ * Wraps AV pipelines behind PrivacyConsentDialog.
+ * Shows SkeletonCard while connecting.
+ */
+
 'use client';
 
-import { useEffect, useState }         from 'react';
-import { useParams }                   from 'next/navigation';
-import { useSessionSocket }            from '@/hooks/useSessionSocket';
-import { useQuizSocket }               from '@/hooks/useQuizSocket';
-import TextPipeline                    from '@/components/student/TextPipeline';
-import ReactionBar                     from '@/components/student/ReactionBar';
-import VisionPipelineComponent         from '@/components/student/VisionPipeline';
-import AudioPipelineComponent          from '@/components/student/AudioPipeline';
-import QuizWidget                      from '@/components/student/QuizWidget';
-import type { TextSignalPayload }      from '@/components/student/TextPipeline';
+import { useState }           from 'react';
+import { useParams }           from 'next/navigation';
+import dynamic                 from 'next/dynamic';
+import PrivacyConsentDialog    from '@/components/ui/PrivacyConsentDialog';
+import { SkeletonCard }        from '@/components/ui/SkeletonCard';
+import QuizWidget              from '@/components/student/QuizWidget';
+import { useStudentSocket }    from '@/hooks/useStudentSocket';
 
-export default function StudentSessionPage() {
+// Lazy-load heavy AV pipelines
+const VisionPipeline = dynamic(() => import('@/components/student/VisionPipeline'), { ssr: false });
+const AudioPipeline  = dynamic(() => import('@/components/student/AudioPipeline'),  { ssr: false });
+const TextPipeline   = dynamic(() => import('@/components/student/TextPipeline'),   { ssr: false });
+
+export default function StudentSession() {
   const params    = useParams();
   const sessionId = params.sessionId as string;
+  const studentId = typeof window !== 'undefined'
+    ? (sessionStorage.getItem('engagex_student_id') ?? '')
+    : '';
 
-  const [studentId,    setStudentId]    = useState('');
-  const [studentName,  setStudentName]  = useState('');
-  const [signalLog,    setSignalLog]    = useState<string[]>([]);
+  const [avEnabled,  setAvEnabled]  = useState<boolean | null>(null); // null = pending consent
+  const [connecting, setConnecting] = useState(true);
 
-  useEffect(() => {
-    setStudentId(sessionStorage.getItem('engagex_student_id')    ?? '');
-    setStudentName(sessionStorage.getItem('engagex_student_name') ?? 'Student');
-  }, []);
-
-  const { connected } = useSessionSocket({
-    sessionId, role: 'student', name: studentName, studentId,
+  const { connected, activeQuiz, submitQuiz } = useStudentSocket(sessionId, studentId, () => {
+    setConnecting(false);
   });
 
-  const { activeQuiz, dismissQuiz } = useQuizSocket(sessionId, studentId);
-
-  function handleSignalSent(s: TextSignalPayload) {
-    const parts = [
-      s.is_deleted ? '❌' : '✅',
-      s.intent   ? `[${s.intent}]` : '',
-      typeof s.engagement_score === 'number' ? `score:${Math.round(s.engagement_score)}` : '',
-      `"${s.text.slice(0, 24)}${s.text.length > 24 ? '…' : ''}"`,
-    ].filter(Boolean);
-    setSignalLog((prev) => [parts.join(' '), ...prev].slice(0, 6));
-  }
-
   return (
-    <main className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4 py-8">
-      {/* Quiz overlay */}
-      {activeQuiz && studentId && (
-        <QuizWidget
-          quiz={activeQuiz}
-          sessionId={sessionId}
-          studentId={studentId}
-          onDismiss={dismissQuiz}
+    <main className="min-h-screen bg-gray-50">
+      {/* Privacy consent gate */}
+      {avEnabled === null && (
+        <PrivacyConsentDialog
+          onAccept={() => setAvEnabled(true)}
+          onDecline={() => setAvEnabled(false)}
         />
       )}
 
-      <div className="flex items-center gap-2 mb-6">
-        <span className={`w-3 h-3 rounded-full ${ connected ? 'bg-green-400 animate-pulse' : 'bg-gray-300' }`} />
-        <span className="text-sm text-gray-600">{connected ? `Connected as ${studentName}` : 'Connecting…'}</span>
-      </div>
+      {/* Active quiz overlay */}
+      {activeQuiz && (
+        <QuizWidget quiz={activeQuiz} studentId={studentId} onSubmit={submitQuiz} />
+      )}
 
-      <div className="bg-white border border-gray-200 rounded-2xl p-6 w-full max-w-md shadow-sm space-y-5">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-full bg-brand-100 flex items-center justify-center text-brand-600 font-bold text-lg">
-            {studentName.charAt(0).toUpperCase()}
-          </div>
-          <div>
-            <p className="font-semibold text-gray-900">{studentName}</p>
-            <p className="text-xs text-gray-400">Multimodal engagement tracking active</p>
-          </div>
+      <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+        <span className="text-lg font-bold text-gray-900">EngageX</span>
+        <div className="flex items-center gap-2">
+          <span className={`w-2.5 h-2.5 rounded-full ${
+            connected ? 'bg-green-400 animate-pulse' : 'bg-gray-300'
+          }`} />
+          <span className="text-sm text-gray-500">{connected ? 'Live' : 'Connecting…'}</span>
         </div>
+      </header>
 
-        {studentId && <VisionPipelineComponent sessionId={sessionId} studentId={studentId} />}
-        <div className="border-t border-gray-100" />
-        {studentId && <AudioPipelineComponent  sessionId={sessionId} studentId={studentId} />}
-        <div className="border-t border-gray-100" />
-        {studentId && <ReactionBar sessionId={sessionId} studentId={studentId} />}
-        <div className="border-t border-gray-100" />
-        {studentId && (
-          <TextPipeline sessionId={sessionId} studentId={studentId} onSignalSent={handleSignalSent} />
+      <div className="max-w-xl mx-auto px-4 py-6 space-y-5">
+
+        {/* Skeleton while connecting */}
+        {connecting && (
+          <>
+            <SkeletonCard rows={2} />
+            <SkeletonCard rows={3} />
+          </>
         )}
 
-        {signalLog.length > 0 && (
-          <div className="p-3 bg-gray-50 rounded-lg">
-            <p className="text-xs font-medium text-gray-400 mb-1">Signal log</p>
-            {signalLog.map((entry, i) => (
-              <p key={i} className="text-xs text-gray-500 truncate">{entry}</p>
-            ))}
-          </div>
+        {!connecting && (
+          <>
+            {/* Text interaction */}
+            <section className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+              <h2 className="text-sm font-semibold text-gray-700 mb-3">Class interaction</h2>
+              <TextPipeline sessionId={sessionId} studentId={studentId} />
+            </section>
+
+            {/* AV pipelines — only if consent given */}
+            {avEnabled && (
+              <>
+                <section className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+                  <h2 className="text-sm font-semibold text-gray-700 mb-2">Attention tracking</h2>
+                  <p className="text-xs text-gray-400 mb-3">
+                    🔒 Processed locally in your browser — no video is sent to any server.
+                  </p>
+                  <VisionPipeline sessionId={sessionId} studentId={studentId} />
+                </section>
+
+                <section className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+                  <h2 className="text-sm font-semibold text-gray-700 mb-2">Voice participation</h2>
+                  <p className="text-xs text-gray-400 mb-3">
+                    🎤 Short audio clips only. No recordings are stored.
+                  </p>
+                  <AudioPipeline sessionId={sessionId} studentId={studentId} />
+                </section>
+              </>
+            )}
+
+            {avEnabled === false && (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 text-sm text-amber-700">
+                👍 You’re in text-only mode. Camera and microphone are not active.
+              </div>
+            )}
+          </>
         )}
       </div>
     </main>
