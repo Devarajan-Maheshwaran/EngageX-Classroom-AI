@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-from routers import sessions, signals, aggregation, quiz, report
+from routers import sessions, signals, aggregation, quiz, report, demo
 from socket_manager import sio
 from services.polling_service import polling_loop
 from middleware.rate_limiter import RateLimitMiddleware
@@ -52,6 +52,7 @@ fastapi_app.include_router(signals.router,     prefix='/api/signals',    tags=['
 fastapi_app.include_router(aggregation.router, prefix='/api/aggregate',  tags=['Aggregation'])
 fastapi_app.include_router(quiz.router,        prefix='/api/quiz',       tags=['Quiz'])
 fastapi_app.include_router(report.router,      prefix='/api/report',     tags=['Report'])
+fastapi_app.include_router(demo.router,        prefix='/api/demo',       tags=['Demo'])
 
 
 @fastapi_app.get('/health', tags=['Health'])

@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { HelpCircle, CheckCircle, Zap, Moon, Send, Ban, ArrowLeft } from 'lucide-react';
 import { useMeetingSocket } from '../hooks/useMeetingSocket';
+import QuizModal from '../components/QuizModal';
 
 const REACTIONS = [
   { Icon: HelpCircle, label: 'Confused',  text: "I'm really confused about this right now.",  color: 'text-rose-400'    },
@@ -64,7 +65,7 @@ function JoinForm({ onJoin }) {
 }
 
 function SessionRoom({ sessionId, name }) {
-  const { sendMessage, sessionError, connected } = useMeetingSocket({ role: 'student', sessionId, name });
+  const { sendMessage, sessionError, connected, currentQuiz, setCurrentQuiz } = useMeetingSocket({ role: 'student', sessionId, name });
   const [text, setText]     = useState('');
   const [messages, setMsgs] = useState([]);
   const bottomRef           = useRef(null);
@@ -80,6 +81,25 @@ function SessionRoom({ sessionId, name }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  const handleQuizSubmit = async (selectedIdx) => {
+    try {
+      await fetch(`${import.meta.env.VITE_PYTHON_BACKEND_URL || 'http://localhost:4001'}/api/quiz/respond`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          quiz_id: currentQuiz.quiz_id,
+          session_id: sessionId,
+          student_id: name, // simplified for demo
+          answer_id: selectedIdx.toString(),
+          answer_text: currentQuiz.options[selectedIdx],
+        })
+      });
+      setCurrentQuiz(null); // Hide optimistically
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   if (sessionError) {
     return (
@@ -152,6 +172,11 @@ function SessionRoom({ sessionId, name }) {
           </button>
         </div>
       </div>
+      <QuizModal 
+        quiz={currentQuiz} 
+        onSubmit={handleQuizSubmit} 
+        onClose={() => setCurrentQuiz(null)} 
+      />
     </div>
   );
 }

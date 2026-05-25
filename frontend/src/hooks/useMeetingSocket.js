@@ -17,6 +17,7 @@ export function useMeetingSocket({ role, sessionId, name }) {
   const [sentiments, setSentiments]     = useState([]);
   const [connected, setConnected]       = useState(false);
   const [sessionError, setSessionError] = useState(null);
+  const [currentQuiz, setCurrentQuiz]   = useState(null);
   const socketRef = useRef(null);
 
   useEffect(() => {
@@ -78,6 +79,17 @@ export function useMeetingSocket({ role, sessionId, name }) {
       setSessionError('Session has ended.');
     });
 
+    // Quiz events
+    socket.on('quiz_start', (quiz) => {
+      setCurrentQuiz(quiz);
+    });
+
+    socket.on('quiz_response_ack', (ack) => {
+      if (ack.student_id === socketRef.current?.id) {
+        setCurrentQuiz(null); // hide quiz after answering
+      }
+    });
+
     return () => {
       socket.disconnect();
       socketRef.current = null;
@@ -120,6 +132,8 @@ export function useMeetingSocket({ role, sessionId, name }) {
     connected,
     sessionError,
     roomMood,
+    currentQuiz,
+    setCurrentQuiz,
     sendMessage,
     endSession,
   };

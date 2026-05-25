@@ -1,5 +1,6 @@
 // HostDashboard.jsx — Phase 5A / emoji-free (Phase 5A.1)
 // All emojis replaced with Lucide icons.
+import React, { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Link } from 'react-router-dom';
 import { Home, Bug } from 'lucide-react';
@@ -8,17 +9,52 @@ import SessionHeader        from '../components/SessionHeader';
 import ParticipantGrid      from '../components/ParticipantGrid';
 import SentimentTimeline    from '../components/SentimentTimeline';
 import AlertFeed            from '../components/AlertFeed';
+import SummaryDrawer        from '../components/SummaryDrawer';
 
 export default function HostDashboard() {
   const [searchParams] = useSearchParams();
   const sessionId      = searchParams.get('sessionId') || '';
   const debug          = searchParams.get('debug') === '1';
 
+  const [isSummaryOpen, setIsSummaryOpen] = useState(false);
+  const [summaryData, setSummaryData] = useState(null);
+
   const {
     participants, alerts, sentiments,
     connected, sessionError, roomMood,
     endSession,
   } = useMeetingSocket({ role: 'teacher', sessionId, name: 'Host' });
+
+  const handleEndSession = async () => {
+    endSession();
+    setIsSummaryOpen(true);
+    try {
+      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/session/${sessionId}/summary`);
+      if (res.ok) {
+        const data = await res.json();
+        setSummaryData(data);
+      }
+    } catch (err) {
+      console.error('Failed to load summary', err);
+    }
+  };
+
+  const handleDownloadPdf = async () => {
+    try {
+      const res = await fetch(`${import.meta.env.VITE_PYTHON_BACKEND_URL || 'http://localhost:4001'}/api/report/generate-pdf/${sessionId}`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.reports && data.reports.length > 0) {
+          // Trigger download of the first report or a combined report
+          // Note: In real app, you might download a zip or multiple. Let's just download the first one.
+          const studentId = data.reports[0].student_id;
+          window.open(`${import.meta.env.VITE_PYTHON_BACKEND_URL || 'http://localhost:4001'}/api/report/pdf/${sessionId}/${studentId}`, '_blank');
+        }
+      }
+    } catch (err) {
+      console.error('Failed to generate PDF', err);
+    }
+  };
 
   if (!sessionId) {
     return (
@@ -48,7 +84,7 @@ export default function HostDashboard() {
         connected={connected}
         roomMood={roomMood}
         participantCount={participants.length}
-        onEnd={endSession}
+        onEnd={handleEndSession}
       />
 
       <main className="flex flex-1 gap-0 overflow-hidden">
@@ -93,6 +129,13 @@ export default function HostDashboard() {
           <AlertFeed alerts={alerts} />
         </div>
       </main>
+
+      <SummaryDrawer 
+        isOpen={isSummaryOpen} 
+        onClose={() => setIsSummaryOpen(false)}
+        summaryData={summaryData}
+        onDownloadPdf={handleDownloadPdf}
+      />
     </div>
   );
 }
