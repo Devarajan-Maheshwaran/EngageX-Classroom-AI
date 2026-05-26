@@ -1,7 +1,7 @@
 FROM node:22-bullseye-slim AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm install
+RUN --mount=type=cache,target=/root/.npm npm install
 COPY . .
 ARG VITE_BACKEND_URL
 ARG VITE_PYTHON_BACKEND_URL
