@@ -27,7 +27,7 @@ function JoinForm({ onJoin }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-bg px-4">
+    <div className="min-h-screen flex items-center justify-center bg-[#030712] px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <h1 className="text-2xl font-bold text-white mb-1">Join a session</h1>
@@ -114,7 +114,7 @@ function SessionRoom({ sessionId, name }) {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-bg">
+    <div className="min-h-screen flex flex-col bg-[#030712]">
       <header className="flex items-center justify-between px-5 py-3 bg-surface border-b border-border">
         <div>
           <span className="text-white font-semibold">Session </span>

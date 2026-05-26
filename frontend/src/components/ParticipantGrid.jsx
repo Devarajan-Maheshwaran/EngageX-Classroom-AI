@@ -1,6 +1,6 @@
 // ParticipantGrid.jsx — Phase 5A / emoji-free (Phase 5A.1)
 // Lucide icons replace all intent emojis.
-import { HelpCircle, Frown, Zap, CheckCircle, Moon, MessageSquare, Clock } from 'lucide-react';
+import { HelpCircle, Frown, Zap, CheckCircle, Moon, MessageSquare, Clock, Users } from 'lucide-react';
 
 const INTENT_ICON = {
   confused:   { Icon: HelpCircle, color: 'text-rose-400'   },
