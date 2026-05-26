@@ -1,7 +1,7 @@
 FROM python:3.11-bullseye
 WORKDIR /app
 COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip pip install --default-timeout=1000 --retries=10 torch --index-url https://download.pytorch.org/whl/cpu
+RUN --mount=type=cache,target=/root/.cache/pip pip install --default-timeout=1000 --retries=10 torch==2.2.2 --index-url https://download.pytorch.org/whl/cpu
 RUN --mount=type=cache,target=/root/.cache/pip pip install --default-timeout=1000 --retries=10 -r requirements.txt
 # Additional package for PDF generation
 RUN --mount=type=cache,target=/root/.cache/pip pip install reportlab
