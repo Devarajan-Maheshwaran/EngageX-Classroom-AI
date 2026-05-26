@@ -9,7 +9,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./supabase/schema.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./supabase/migrations:/docker-entrypoint-initdb.d
 
   redis:
     image: redis:7-alpine
@@ -46,7 +46,8 @@ services:
       - .env
     environment:
       - REDIS_URL=redis://redis:6379
-      - SUPABASE_URL=http://postgres:5432 # We can leave this for now, but really python backend uses supabase client. A real supabase setup involves more than postgres. For local testing without supabase cloud, we might just mock the endpoints, but we can also use the postgres db directly using psycopg2. Wait, the python backend expects Supabase Cloud (Rest API). We can't just point the supabase JS/Python client to raw postgres. It needs PostgREST! So we should probably spin up Supabase locally. But full Supabase local takes 10+ containers. Maybe we'll just run it as a dummy for now.
+      # Note: Python backend uses the Supabase SDK which requires a PostgREST API (not raw postgres:5432).
+      # Configure your real SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in your .env file.
     depends_on:
       - postgres
 

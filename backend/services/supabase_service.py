@@ -8,46 +8,50 @@ logger = logging.getLogger('engagex.supabase')
 
 class SupabaseService:
     def __init__(self):
-        url = os.getenv('SUPABASE_URL')
-        key = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_ANON_KEY')
-        if not url or not key:
-            raise ValueError('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set')
-        self._client: Client = create_client(url, key)
+        url = os.getenv('SUPABASE_URL', '')
+        key = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_ANON_KEY') or ''
+        if not url or not key or 'your-project' in url:
+            logger.warning('SUPABASE_URL or KEY is missing or dummy. Operating in MOCK mode.')
+            self._client = None
+        else:
+            self._client: Client = create_client(url, key)
 
     def create_session(self, teacher_id: str, title: str, code: str) -> dict:
+        if not self._client:
+            return {'id': 'mock-session-id', 'join_code': code, 'title': title, 'status': 'active'}
         row = (self._client.table('sessions')
-               .insert({'teacher_id': teacher_id, 'title': title, 'code': code, 'status': 'active'})
+               .insert({'teacher_id': teacher_id, 'title': title, 'join_code': code, 'status': 'active'})
                .execute())
         return row.data[0]
 
     def get_session_by_code(self, code: str) -> Optional[dict]:
         res = (self._client.table('sessions').select('*')
-               .eq('code', code).eq('status', 'active').limit(1).execute())
+               .eq('join_code', code).eq('status', 'active').limit(1).execute())
         return res.data[0] if res.data else None
 
     def get_session_state(self, session_id: str) -> Optional[dict]:
         res = (self._client.table('sessions')
-               .select('*, session_students(id, name)')
+               .select('*, session_students(id, student_name)')
                .eq('id', session_id).limit(1).execute())
         if not res.data:
             return None
         session = res.data[0]
         session['students'] = [
-            {'id': s['id'], 'name': s.get('name', '')}
+            {'id': s['id'], 'name': s.get('student_name', '')}
             for s in session.get('session_students', [])
         ]
         return session
 
     def get_active_sessions(self) -> list:
         res = (self._client.table('sessions')
-               .select('id, session_students(id, name)')
+               .select('id, session_students(id, student_name)')
                .eq('status', 'active').execute())
         sessions = []
         for row in (res.data or []):
             sessions.append({
                 'id': row['id'],
                 'students': [
-                    {'id': s['id'], 'name': s.get('name', '')}
+                    {'id': s['id'], 'name': s.get('student_name', '')}
                     for s in row.get('session_students', [])
                 ],
             })
@@ -55,7 +59,7 @@ class SupabaseService:
 
     def join_session(self, session_id: str, student_name: str) -> dict:
         res = (self._client.table('session_students')
-               .insert({'session_id': session_id, 'name': student_name})
+               .insert({'session_id': session_id, 'student_name': student_name})
                .execute())
         return res.data[0]
 
