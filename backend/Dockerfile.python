@@ -1,6 +1,7 @@
 FROM python:3.11-bullseye
 WORKDIR /app
 COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip pip install torch --index-url https://download.pytorch.org/whl/cpu
 RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
 # Additional package for PDF generation
 RUN --mount=type=cache,target=/root/.cache/pip pip install reportlab
