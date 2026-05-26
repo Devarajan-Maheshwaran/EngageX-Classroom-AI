@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 node:18-alpine AS builder
+FROM node:18.20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm install
@@ -9,7 +9,7 @@ ENV VITE_BACKEND_URL=$VITE_BACKEND_URL
 ENV VITE_PYTHON_BACKEND_URL=$VITE_PYTHON_BACKEND_URL
 RUN npm run build
 
-FROM --platform=linux/amd64 nginx:alpine
+FROM nginx:1.25-alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
 # Add basic nginx config for SPA routing if needed, but default might work if index.html is there. Let's create a custom one just in case.
 RUN echo 'server { listen 80; location / { root /usr/share/nginx/html; index index.html index.htm; try_files $$uri $$uri/ /index.html; } }' > /etc/nginx/conf.d/default.conf
