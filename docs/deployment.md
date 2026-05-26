@@ -33,31 +33,25 @@
 
 ---
 
-## 2. Backend — Railway
+## 2. Backend — Local Docker + Ngrok
+
+This setup is used to expose your local backend securely to the public internet so that the Vercel-deployed frontend can communicate with it. This is ideal for HR / Researcher demonstrations without needing a permanent cloud backend deployment.
 
 ```bash
-# Install Railway CLI
-npm install -g @railway/cli
-railway login
-
-# Link repo and deploy
-railway link
-railway up
+# Start your local backend services
+docker-compose up -d
 ```
 
-Set environment variables in Railway dashboard:
-```
-SUPABASE_URL=...
-SUPABASE_SERVICE_ROLE_KEY=...
-GROQ_API_KEY=...
-GROQ_MODEL=llama3-8b-8192
-UPSTASH_REDIS_REST_URL=...
-UPSTASH_REDIS_REST_TOKEN=...
-CORS_ORIGINS=https://your-app.vercel.app
+In separate terminals, start `ngrok` to expose the ports:
+```bash
+# Terminal 1 (Node Backend)
+ngrok http 4000
+
+# Terminal 2 (Python Backend)
+ngrok http 4001
 ```
 
-Railway will auto-detect `railway.toml` and use the `Dockerfile`.
-Verify at: `https://your-backend.railway.app/health`
+Copy the generated `https://*.ngrok-free.app` URLs for both. Keep these terminal windows open during your demonstration.
 
 ---
 
@@ -65,16 +59,19 @@ Verify at: `https://your-backend.railway.app/health`
 
 ```bash
 npm install -g vercel
-cd frontend_v2
+cd frontend
 vercel --prod
 ```
 
-Set environment variable in Vercel dashboard:
+During setup, ensure the **Root Directory** is set to `frontend`. 
+
+Set environment variables in the Vercel dashboard:
 ```
-NEXT_PUBLIC_BACKEND_URL=https://your-backend.railway.app
+VITE_BACKEND_URL=https://<your-node-ngrok-url>.ngrok-free.app
+VITE_PYTHON_BACKEND_URL=https://<your-python-ngrok-url>.ngrok-free.app
 ```
 
-`vercel.json` is already configured in `frontend_v2/`.
+`vercel.json` is already configured in `frontend/` to handle SPA routing.
 
 ---
 
