@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+const PYTHON_URL = import.meta.env.VITE_PYTHON_BACKEND_URL || 'http://localhost:4001';
 
 // ─── Intent icon map ────────────────────────────────────────────────────────
 const INTENT_ICON = {
@@ -208,10 +209,28 @@ export default function SessionRecap() {
 
   useEffect(() => {
     if (!sessionId) { setLoading(false); return; }
-    fetch(`${BACKEND_URL}/api/session/${sessionId}/summary`)
-      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then((data) => { setReport(data); setLoading(false); })
-      .catch((err) => { setError(err.message); setLoading(false); });
+    async function loadRecap() {
+      try {
+        const live = await fetch(`${BACKEND_URL}/api/session/${sessionId}/summary`);
+        if (live.ok) {
+          const data = await live.json();
+          if (!data.error) {
+            setReport(data);
+            return;
+          }
+        }
+
+        const saved = await fetch(`${PYTHON_URL}/api/report/session/${sessionId}`);
+        if (!saved.ok) throw new Error(`HTTP ${saved.status}`);
+        const row = await saved.json();
+        setReport(row.report_data || row);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadRecap();
   }, [sessionId]);
 
   function downloadJSON() {

@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from typing import Optional
 from services.supabase_service import SupabaseService
-from agents.quiz_crew import run_quiz_crew
+from agents.quiz_crew import run_quiz_analysis, run_quiz_crew
 from socket_manager import sio
 
 router = APIRouter()
@@ -27,6 +27,17 @@ class SubmitResponseRequest(BaseModel):
     student_id:  str
     answer_id:   Optional[str] = None
     answer_text: Optional[str] = None
+
+
+class GenerateQuizRequest(BaseModel):
+    session_id: str
+    topic:      str
+    context:    str = ''
+
+
+@router.post('/generate', status_code=status.HTTP_201_CREATED)
+async def generate_quiz(body: GenerateQuizRequest):
+    return run_quiz_crew(body.topic, body.context)
 
 
 @router.post('/', status_code=status.HTTP_201_CREATED)
@@ -92,7 +103,7 @@ async def submit_response(body: SubmitResponseRequest):
 @router.post('/analyse/{quiz_id}', status_code=status.HTTP_200_OK)
 async def analyse_quiz(quiz_id: str):
     try:
-        insights = run_quiz_crew(quiz_id)
+        insights = run_quiz_analysis(quiz_id)
     except Exception as e:
         logger.error(f'analyse_quiz: {e}')
         raise HTTPException(500, str(e))

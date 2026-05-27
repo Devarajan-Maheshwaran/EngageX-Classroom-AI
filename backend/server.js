@@ -6,6 +6,7 @@ const http       = require('http');
 const { Server } = require('socket.io');
 const cors       = require('cors');
 const { nanoid } = require('nanoid');
+const { createClient } = require('@supabase/supabase-js');
 
 const bus                  = require('./services/eventBus');
 const participationService = require('./services/participationService');
@@ -14,6 +15,35 @@ const classifierService    = require('./services/classifierService');
 const analyticsService     = require('./services/analyticsService');
 const engagementService    = require('./services/engagementService');
 const orchestrator         = require('./agents/agentOrchestrator');
+
+const supabase = process.env.SUPABASE_URL
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+  : null;
+
+function dbInsert(table, row) {
+  if (!supabase) return Promise.resolve();
+  return supabase.from(table).insert(row).then(({ error }) => {
+    if (error) console.warn(`[Supabase] insert ${table}:`, error.message);
+  });
+}
+
+function dbUpsert(table, row, conflict) {
+  if (!supabase) return Promise.resolve();
+  return supabase.from(table).upsert(row, { onConflict: conflict }).then(({ error }) => {
+    if (error) console.warn(`[Supabase] upsert ${table}:`, error.message);
+  });
+}
+
+function dbUpdate(table, match, updates) {
+  if (!supabase) return Promise.resolve();
+  let query = supabase.from(table).update(updates);
+  Object.entries(match).forEach(([key, value]) => {
+    query = query.eq(key, value);
+  });
+  return query.then(({ error }) => {
+    if (error) console.warn(`[Supabase] update ${table}:`, error.message);
+  });
+}
 
 const app    = express();
 const server = http.createServer(app);
@@ -46,6 +76,13 @@ app.get('/health', (_req, res) => res.json({ status: 'ok', ts: Date.now() }));
 app.post('/api/session/create', (_req, res) => {
   const sessionId = nanoid(6).toUpperCase();
   analyticsService.initSession(sessionId);
+  dbInsert('sessions', {
+    id: sessionId,
+    join_code: sessionId,
+    title: 'Live Session',
+    status: 'active',
+    started_at: new Date().toISOString(),
+  });
   orchestrator.startSession(sessionId);
   activeSessions.add(sessionId);
   console.log(`[Session] Created: ${sessionId}`);
@@ -106,6 +143,13 @@ io.on('connection', (socket) => {
 
   if (role === 'student') {
     const joinType = participationService.registerStudent(sessionId, socket.id, name);
+    dbUpsert('session_students', {
+      session_id: sessionId,
+      student_name: name,
+      socket_id: socket.id,
+      joined_at: new Date().toISOString(),
+      is_active: true,
+    }, 'socket_id');
     bus.publish(bus.EVENTS.STUDENT_JOIN, { sessionId, studentId: socket.id, name });
     io.to(sessionId).emit('participant:joined', {
       participantId: socket.id, name, reconnect: joinType === 'restored',
@@ -140,6 +184,24 @@ io.on('connection', (socket) => {
       sentiment.label, sentiment.score,
       intent.label, intent.score, intent.allScores
     );
+    const engScore = Math.round(
+      (intent.label === 'confused' || intent.label === 'frustrated' ? 25 :
+       intent.label === 'engaged'  || intent.label === 'excited'    ? 85 : 60) *
+      (sentiment.label === 'POSITIVE' ? 1.0 : sentiment.label === 'NEGATIVE' ? 0.6 : 0.8)
+    );
+    dbInsert('student_signals', {
+      session_id: sessionId,
+      student_id: socket.id,
+      signal_type: 'text',
+      signal_data: {
+        text: trimmed,
+        sentiment: sentiment.label,
+        sentimentScore: sentiment.score,
+        intent: intent.label,
+        intentScore: intent.score,
+      },
+      engagement_score: engScore,
+    });
     bus.publish(bus.EVENTS.STUDENT_MESSAGE, { sessionId, studentId: socket.id, text: trimmed, sentiment, intent });
     io.to(sessionId).emit('sentiment:update', {
       participantId: socket.id, name, text: trimmed,
@@ -161,6 +223,7 @@ io.on('connection', (socket) => {
       return;
     }
     orchestrator.endSession(sessionId);
+    dbUpdate('sessions', { id: sessionId }, { status: 'ended', ended_at: new Date().toISOString() });
     activeSessions.delete(sessionId);
     io.to(sessionId).emit('session:ended', { sessionId });
     console.log(`[Session] Ended: ${sessionId}`);
@@ -169,6 +232,10 @@ io.on('connection', (socket) => {
   socket.on('disconnect', (reason) => {
     if (role === 'student' && activeSessions.has(sessionId)) {
       participationService.removeStudent(sessionId, socket.id);
+      dbUpdate('session_students', { socket_id: socket.id }, {
+        is_active: false,
+        left_at: new Date().toISOString(),
+      });
       bus.publish(bus.EVENTS.STUDENT_LEAVE, { sessionId, studentId: socket.id });
       io.to(sessionId).emit('participant:left', { participantId: socket.id, name });
       console.log(`[Leave] ${name} ← ${sessionId} (${reason})`);

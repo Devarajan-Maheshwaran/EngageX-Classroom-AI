@@ -13,8 +13,12 @@ supabase>=2.4.0
 
 # AI / ML
 crewai>=0.55.0
+crewai-tools>=0.1.0
 langchain-groq>=0.1.6
 groq>=0.9.0
+deepface>=0.0.93
+fer>=22.5.1
+opencv-python-headless>=4.8.0
 faster-whisper>=1.0.0
 librosa>=0.10.0
 transformers>=4.40.0

@@ -19,7 +19,7 @@ import { SpotlightCard }    from '../components/reactbits/SpotlightCard';
 import { BlurText }         from '../components/reactbits/BlurText';
 import { LogoLoop }         from '../components/reactbits/LogoLoop';
 
-const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
 
 // ─── data ────────────────────────────────────────────────────────────────────
 
@@ -112,14 +112,14 @@ export default function Home() {
   const [error,   setError]   = useState('');
   const navigate = useNavigate();
 
-  async function startSession() {
+  async function handleStartClass() {
     setLoading(true);
     setError('');
     try {
-      const res  = await fetch(`${BACKEND}/api/session/create`, { method: 'POST' });
+      const res  = await fetch(`${BACKEND_URL}/api/session/create`, { method: 'POST' });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const data = await res.json();
-      navigate(`/host?sessionId=${data.sessionId}`);
+      navigate(`/room?sessionId=${data.sessionId}&role=teacher&name=Teacher`);
     } catch (err) {
       setError(err.message.includes('fetch') ? 'Could not reach the server. Is the backend running?' : err.message);
     } finally {
@@ -175,7 +175,7 @@ export default function Home() {
 
         <div className="flex flex-col sm:flex-row gap-3 justify-center items-center">
           <button
-            onClick={startSession}
+            onClick={handleStartClass}
             disabled={loading}
             className="flex items-center gap-2 bg-white text-[#030712] hover:bg-white/90 disabled:opacity-50 font-bold px-8 py-3.5 rounded-xl transition text-sm"
           >
@@ -295,7 +295,7 @@ export default function Home() {
         <p className="text-white/20 mb-10 text-xs">Participants join from any device on the same link — no account, no install.</p>
         <div className="flex flex-col sm:flex-row gap-3 justify-center items-center">
           <button
-            onClick={startSession}
+            onClick={handleStartClass}
             disabled={loading}
             className="flex items-center gap-2 bg-white text-[#030712] hover:bg-white/90 disabled:opacity-50 font-bold px-8 py-3.5 rounded-xl transition text-sm"
           >

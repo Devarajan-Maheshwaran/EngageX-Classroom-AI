@@ -1,160 +1,228 @@
-import { useState, useEffect } from 'react';
-import { mockParticipants } from '../data/mockParticipants';
-import TopBar from '../components/meeting/TopBar';
+import { useState, useRef, useEffect } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useMeetingSocket } from '../hooks/useMeetingSocket';
+import { useVisionCapture } from '../hooks/useVisionCapture';
+import { useAudioCapture } from '../hooks/useAudioCapture';
 import VideoGrid from '../components/meeting/VideoGrid';
 import ControlBar from '../components/meeting/ControlBar';
+import TopBar from '../components/meeting/TopBar';
 import ChatPanel from '../components/meeting/ChatPanel';
 import ParticipantsPanel from '../components/meeting/ParticipantsPanel';
-import ActiveSpeakerBar from '../components/meeting/ActiveSpeakerBar';
+import AIInsightPanel from '../components/meeting/AIInsightPanel';
+import QuizOverlay from '../components/meeting/QuizOverlay';
+import SummaryDrawer from '../components/SummaryDrawer';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 
-const defaultMessages = [
-  { id: 1, senderId: '2', senderName: 'Priya Sharma', text: 'Good morning everyone!', ts: Date.now() - 120000, isLocal: false },
-  { id: 2, senderId: '3', senderName: 'Arjun Nair',   text: 'Can everyone hear me ok?', ts: Date.now() - 90000, isLocal: false },
-  { id: 3, senderId: 'local', senderName: 'You',      text: 'Yes, all good!', ts: Date.now() - 60000, isLocal: true },
-];
+function sentimentToScore(sentiment) {
+  if (!sentiment) return null;
+  const baseByIntent = {
+    engaged: 85,
+    excited: 90,
+    confused: 30,
+    frustrated: 20,
+    bored: 35,
+    neutral: 60,
+  };
+  const base = baseByIntent[sentiment.intentLabel] ?? 60;
+  if (sentiment.label === 'NEGATIVE') return Math.round(base * 0.7);
+  if (sentiment.label === 'POSITIVE') return Math.min(100, Math.round(base * 1.1));
+  return base;
+}
 
 export default function MeetingRoom() {
-  const [participants, setParticipants] = useState(mockParticipants);
-  const [isMuted, setIsMuted]           = useState(false);
-  const [isCameraOff, setIsCameraOff]   = useState(false);
-  const [isHandRaised, setIsHandRaised] = useState(false);
-  const [sidePanel, setSidePanel]       = useState(null); // null | 'chat' | 'participants'
-  const [isScreenSharing, setIsScreenSharing] = useState(false);
-  const [chatMessages, setChatMessages]       = useState(defaultMessages);
-  const [chatInput, setChatInput]             = useState('');
-  const [isTileView, setIsTileView]           = useState(true); // true=gallery, false=spotlight
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const sessionId = searchParams.get('sessionId') || '';
+  const role = searchParams.get('role') || 'student';
+  const name = searchParams.get('name') || (role === 'teacher' ? 'Teacher' : 'Student');
+  const isTeacher = role === 'teacher';
 
-  // Active Speaker simulation (Cycles every 5 seconds among non-muted people)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setParticipants((prev) => {
-        const eligible = prev.filter((p) => !p.isMuted);
-        if (!eligible.length) return prev;
-        const next = eligible[Math.floor(Math.random() * eligible.length)];
-        return prev.map((p) => ({ ...p, isSpeaking: p.id === next.id }));
-      });
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isCameraOff, setIsCameraOff] = useState(false);
+  const [panel, setPanel] = useState(isTeacher ? 'ai' : null);
+  const [showSummary, setShowSummary] = useState(false);
+  const localVideoRef = useRef(null);
 
-  // Keyboard Shortcuts: Space to Mute, Escape to close side panel
+  const {
+    participants,
+    alerts,
+    sentiments,
+    connected,
+    sessionError,
+    roomMood,
+    currentQuiz,
+    setCurrentQuiz,
+    sendMessage,
+    endSession,
+    visionUpdates,
+    socketId,
+    sendQuizResponse,
+  } = useMeetingSocket({ role, sessionId, name });
+
   useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.code === 'Space' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
-        e.preventDefault();
-        setIsMuted((prev) => {
-          const next = !prev;
-          setParticipants((pList) => pList.map((p) => p.isLocal ? { ...p, isMuted: next } : p));
-          return next;
-        });
-      }
-      if (e.code === 'Escape') {
-        setSidePanel(null);
-      }
+    if (isCameraOff) {
+      localVideoRef.current?.srcObject?.getTracks().forEach((track) => track.stop());
+      if (localVideoRef.current) localVideoRef.current.srcObject = null;
+      return undefined;
+    }
+
+    let streamRef = null;
+    navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+      .then((stream) => {
+        streamRef = stream;
+        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      })
+      .catch(() => {});
+
+    return () => {
+      streamRef?.getTracks().forEach((track) => track.stop());
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [isCameraOff]);
 
-  // Control handlers
-  const handleMuteToggle = () => {
-    setIsMuted((v) => {
-      const next = !v;
-      setParticipants((prev) => prev.map((p) => p.isLocal ? { ...p, isMuted: next } : p));
-      return next;
+  const localStudentId = isTeacher ? 'teacher-local' : (socketId || 'local');
+
+  useVisionCapture({
+    sessionId,
+    studentId: localStudentId,
+    studentName: name,
+    videoRef: localVideoRef,
+    enabled: !isTeacher && !isCameraOff && connected,
+  });
+
+  useAudioCapture({
+    sessionId,
+    studentId: localStudentId,
+    studentName: name,
+    enabled: !isTeacher && !isMuted && connected,
+    onTranscript: (text) => sendMessage(text),
+  });
+
+  const enrichedParticipants = participants.map((participant) => {
+    const lastSentiment = [...sentiments].reverse().find((item) => item.participantId === participant.studentId);
+    const vision = visionUpdates[participant.studentId];
+    const engagementScore = vision?.engagement_score ?? (lastSentiment ? sentimentToScore(lastSentiment) : participant.participationScore ?? null);
+    const recentAlert = alerts.find((alert) => {
+      const alertStudentId = alert.studentId || alert.student_id;
+      return alertStudentId === participant.studentId && Date.now() - (alert.receivedAt || 0) < 60000;
     });
+
+    return {
+      ...participant,
+      id: participant.studentId,
+      isLocal: false,
+      isMuted: false,
+      isCameraOff: false,
+      isSpeaking: Boolean(lastSentiment && Date.now() - (lastSentiment.ts || 0) < 5000),
+      engagementScore,
+      emotionLabel: vision?.dominant_emotion ?? lastSentiment?.intentLabel ?? participant.lastIntentLabel ?? 'neutral',
+      intentLabel: lastSentiment?.intentLabel ?? participant.lastIntentLabel ?? null,
+      alertLevel: recentAlert?.type?.toLowerCase() || null,
+      initials: participant.name?.slice(0, 2).toUpperCase() || '??',
+      avatarColor: 'bg-amber-800',
+    };
+  });
+
+  const localVision = visionUpdates[localStudentId];
+  const localParticipant = {
+    id: localStudentId,
+    studentId: localStudentId,
+    name,
+    isLocal: true,
+    isMuted,
+    isCameraOff,
+    isSpeaking: false,
+    engagementScore: localVision?.engagement_score ?? null,
+    emotionLabel: localVision?.dominant_emotion ?? 'neutral',
+    alertLevel: null,
+    initials: name.slice(0, 2).toUpperCase(),
+    avatarColor: isTeacher ? 'bg-slate-700' : 'bg-amber-900',
   };
 
-  const handleCameraToggle = () => {
-    setIsCameraOff((v) => {
-      const next = !v;
-      setParticipants((prev) => prev.map((p) => p.isLocal ? { ...p, isCameraOff: next } : p));
-      return next;
-    });
-  };
+  const allParticipants = [localParticipant, ...enrichedParticipants];
 
-  const handleHandToggle = () => {
-    setIsHandRaised((v) => {
-      const next = !v;
-      setParticipants((prev) => prev.map((p) => p.isLocal ? { ...p, handRaised: next } : p));
-      return next;
-    });
-  };
+  useEffect(() => {
+    if (sessionError === 'Session has ended.') {
+      navigate(`/recap?sessionId=${sessionId}`);
+    }
+  }, [sessionError, navigate, sessionId]);
 
-  const handleSend = () => {
-    if (!chatInput.trim()) return;
-    setChatMessages((prev) => [
-      ...prev,
-      {
-        id: Date.now(),
-        senderId: 'local',
-        senderName: 'You',
-        text: chatInput.trim(),
-        ts: Date.now(),
-        isLocal: true,
-      },
-    ]);
-    setChatInput('');
-  };
-
-  const activeSpeaker = participants.find((p) => p.isSpeaking && !p.isMuted);
+  if (!sessionId) {
+    return (
+      <div className="min-h-screen bg-[#0d0d0d] text-white flex items-center justify-center">
+        Missing session ID.
+      </div>
+    );
+  }
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-[#202124] overflow-hidden select-none font-sans relative z-10">
-      {/* Top Header */}
-      <TopBar participantCount={participants.length} />
+    <ErrorBoundary>
+      <div className="flex flex-col h-screen bg-[#0d0d0d] text-white overflow-hidden">
+        <TopBar
+          sessionId={sessionId}
+          connected={connected}
+          roomMood={roomMood}
+          participantCount={allParticipants.length}
+        />
 
-      {/* Main viewport area */}
-      <div className="flex flex-1 overflow-hidden min-h-0">
-        <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative">
-          {/* Speaking Banner Notification */}
-          <ActiveSpeakerBar activeSpeaker={activeSpeaker} />
+        <div className="flex flex-1 overflow-hidden">
+          <div className="flex-1 flex flex-col overflow-hidden relative">
+            <VideoGrid participants={allParticipants} localVideoRef={localVideoRef} />
 
-          {/* Videos Grid */}
-          <VideoGrid
-            participants={participants}
-            isTileView={isTileView}
-            localMuted={isMuted}
-            localCameraOff={isCameraOff}
-          />
+            {!isTeacher && currentQuiz && (
+              <QuizOverlay
+                quiz={currentQuiz}
+                onSubmit={(answerId, answerText) => {
+                  sendQuizResponse(currentQuiz.quiz_id, answerId, answerText);
+                }}
+                onExpire={() => setCurrentQuiz(null)}
+              />
+            )}
+          </div>
+
+          {panel === 'chat' && (
+            <ChatPanel sentiments={sentiments} onSend={sendMessage} onClose={() => setPanel(null)} />
+          )}
+          {panel === 'participants' && (
+            <ParticipantsPanel participants={allParticipants} onClose={() => setPanel(null)} />
+          )}
+          {isTeacher && panel === 'ai' && (
+            <AIInsightPanel
+              participants={enrichedParticipants}
+              alerts={alerts}
+              roomMood={roomMood}
+              sessionId={sessionId}
+              onClose={() => setPanel(null)}
+              onEndSession={() => {
+                endSession();
+                setShowSummary(true);
+              }}
+            />
+          )}
         </div>
 
-        {/* Side slide-in panel */}
-        {sidePanel === 'chat' && (
-          <ChatPanel
-            messages={chatMessages}
-            input={chatInput}
-            onInputChange={setChatInput}
-            onSend={handleSend}
-            onClose={() => setSidePanel(null)}
-          />
-        )}
-        {sidePanel === 'participants' && (
-          <ParticipantsPanel
-            participants={participants}
-            onClose={() => setSidePanel(null)}
-          />
+        <ControlBar
+          isMuted={isMuted}
+          isCameraOff={isCameraOff}
+          activePanel={panel}
+          onToggleMute={() => setIsMuted((muted) => !muted)}
+          onToggleCamera={() => setIsCameraOff((off) => !off)}
+          onPanelChange={setPanel}
+          isTeacher={isTeacher}
+          onLeave={() => {
+            if (isTeacher) {
+              endSession();
+              navigate(`/recap?sessionId=${sessionId}`);
+            } else {
+              navigate('/');
+            }
+          }}
+          participantCount={allParticipants.length}
+        />
+
+        {showSummary && (
+          <SummaryDrawer isOpen={showSummary} onClose={() => navigate(`/recap?sessionId=${sessionId}`)} />
         )}
       </div>
-
-      {/* Bottom meeting controls bar */}
-      <ControlBar
-        isMuted={isMuted}
-        isCameraOff={isCameraOff}
-        isHandRaised={isHandRaised}
-        isScreenSharing={isScreenSharing}
-        isTileView={isTileView}
-        activePanel={sidePanel}
-        onMuteToggle={handleMuteToggle}
-        onCameraToggle={handleCameraToggle}
-        onHandToggle={handleHandToggle}
-        onShareToggle={() => setIsScreenSharing((v) => !v)}
-        onChatToggle={() => setSidePanel((v) => v === 'chat' ? null : 'chat')}
-        onParticipantsToggle={() => setSidePanel((v) => v === 'participants' ? null : 'participants')}
-        onViewToggle={() => setIsTileView((v) => !v)}
-        onLeave={() => window.history.back()}
-        participantCount={participants.length}
-      />
-    </div>
+    </ErrorBoundary>
   );
 }

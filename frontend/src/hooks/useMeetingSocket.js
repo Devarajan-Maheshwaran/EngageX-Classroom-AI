@@ -10,6 +10,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+const PYTHON_URL = import.meta.env.VITE_PYTHON_BACKEND_URL || 'http://localhost:4001';
 
 export function useMeetingSocket({ role, sessionId, name }) {
   const [participants, setParticipants] = useState([]);
@@ -18,6 +19,8 @@ export function useMeetingSocket({ role, sessionId, name }) {
   const [connected, setConnected]       = useState(false);
   const [sessionError, setSessionError] = useState(null);
   const [currentQuiz, setCurrentQuiz]   = useState(null);
+  const [visionUpdates, setVisionUpdates] = useState({});
+  const [socketId, setSocketId] = useState(null);
   const socketRef = useRef(null);
 
   useEffect(() => {
@@ -30,7 +33,7 @@ export function useMeetingSocket({ role, sessionId, name }) {
     });
     socketRef.current = socket;
 
-    socket.on('connect',    () => setConnected(true));
+    socket.on('connect',    () => { setConnected(true); setSocketId(socket.id); });
     socket.on('disconnect', () => setConnected(false));
 
     // Full participant snapshot (every 10s + on join)
@@ -84,10 +87,13 @@ export function useMeetingSocket({ role, sessionId, name }) {
       setCurrentQuiz(quiz);
     });
 
-    socket.on('quiz_response_ack', (ack) => {
-      if (ack.student_id === socketRef.current?.id) {
-        setCurrentQuiz(null); // hide quiz after answering
-      }
+    socket.on('quiz_response_ack', () => {});
+
+    socket.on('vision_ack', ({ student_id, dominant_emotion, engagement_score, looking_away }) => {
+      setVisionUpdates((prev) => ({
+        ...prev,
+        [student_id]: { dominant_emotion, engagement_score, looking_away, ts: Date.now() },
+      }));
     });
 
     return () => {
@@ -109,6 +115,20 @@ export function useMeetingSocket({ role, sessionId, name }) {
       socketRef.current.emit('session:end');
     }
   }, []);
+
+  const sendQuizResponse = useCallback((quizId, answerId, answerText) => {
+    fetch(`${PYTHON_URL}/api/quiz/respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        quiz_id: quizId,
+        session_id: sessionId,
+        student_id: socketRef.current?.id,
+        answer_id: answerId,
+        answer_text: answerText,
+      }),
+    });
+  }, [sessionId]);
 
   // Compute room mood from last 10 sentiments (mirrors backend getRoomMood logic)
   const roomMood = (() => {
@@ -134,6 +154,9 @@ export function useMeetingSocket({ role, sessionId, name }) {
     roomMood,
     currentQuiz,
     setCurrentQuiz,
+    visionUpdates,
+    socketId,
+    sendQuizResponse,
     sendMessage,
     endSession,
   };
