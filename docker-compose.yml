@@ -1,23 +1,6 @@
+version: '3.8'
 
 services:
-  postgres:
-    image: postgres:15-alpine
-    environment:
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: engagex
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./supabase/migrations:/docker-entrypoint-initdb.d
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-
   backend-node:
     build:
       context: ./backend
@@ -26,15 +9,9 @@ services:
       - "4000:4000"
     env_file:
       - .env
-    environment:
-      - REDIS_URL=redis://redis:6379
-      - DB_HOST=postgres
-      - DB_USER=postgres
-      - DB_PASSWORD=password
-      - DB_NAME=engagex
-    depends_on:
-      - postgres
-      - redis
+    # Node backend relies on SUPABASE_URL from .env.
+    # We removed local postgres/redis since event bus is in-memory 
+    # and DB is hosted Supabase.
 
   backend-python:
     build:
@@ -44,13 +21,9 @@ services:
       - "4001:4001"
     env_file:
       - .env
-    environment:
-      - REDIS_URL=redis://redis:6379
-      # Note: Python backend uses the Supabase SDK which requires a PostgREST API (not raw postgres:5432).
-      # Configure your real SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in your .env file.
-    depends_on:
-      - postgres
+    # Python backend relies on SUPABASE_URL from .env.
 
+  # Frontend container is kept for local development without Vercel.
   frontend:
     build:
       context: ./frontend
@@ -65,7 +38,3 @@ services:
     environment:
       - VITE_BACKEND_URL=http://localhost:4000
       - VITE_PYTHON_BACKEND_URL=http://localhost:4001
-
-volumes:
-  postgres_data:
-  redis_data:
