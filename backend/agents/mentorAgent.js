@@ -1,8 +1,8 @@
 // mentorAgent.js — attaches actionable suggestions to every engagement alert
 //
 // Tiered suggestion strategy (Phase 3B):
-//   Tier 1 — HuggingFace Inference API (Mistral-7B-Instruct-v0.2, free tier)
-//             Used when HF_API_KEY env var is set.
+//   Tier 1 — Groq REST API
+//             Used when GROQ_API_KEY env var is set.
 //             Generates context-aware, natural-language suggestions.
 //   Tier 2 — Curated static suggestions (always fast, always works)
 //             Randomly selected from a per-alert-type pool.
@@ -54,10 +54,10 @@ const STATIC = {
   ],
 };
 
-// ─── HuggingFace Inference API (Tier 1) ──────────────────────────────────────────
+// ─── Groq REST API (Tier 1) ──────────────────────────────────────────
 
-async function fetchHFSuggestion(alertType, alertMessage) {
-  const key = process.env.HF_API_KEY;
+async function fetchGroqSuggestion(alertType, alertMessage) {
+  const key = process.env.GROQ_API_KEY;
   if (!key) return null;
 
   // Clean alert type for readability in prompt
@@ -75,7 +75,7 @@ async function fetchHFSuggestion(alertType, alertMessage) {
 
   try {
     const res = await fetch(
-      'https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2',
+      'https://api.groq.com/openai/v1/chat/completions',
       {
         method:  'POST',
         headers: {
@@ -83,26 +83,29 @@ async function fetchHFSuggestion(alertType, alertMessage) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          inputs:     prompt,
-          parameters: { max_new_tokens: 60, temperature: 0.65, repetition_penalty: 1.1 },
+          model: process.env.GROQ_MODEL || 'llama3-8b-8192',
+          messages: [
+            { role: 'system', content: 'You are an expert meeting facilitator and engagement coach.' },
+            { role: 'user', content: prompt }
+          ],
+          max_tokens: 60,
+          temperature: 0.65,
         }),
         signal: AbortSignal.timeout(5000), // 5s hard timeout — never block an alert
       }
     );
 
     if (!res.ok) {
-      console.warn(`[MentorAgent] HF API returned ${res.status} — falling back to static.`);
+      console.warn(`[MentorAgent] Groq API returned ${res.status} — falling back to static.`);
       return null;
     }
 
     const data  = await res.json();
-    const text  = data?.[0]?.generated_text || '';
-    // Mistral echoes the prompt — strip everything up to and including [/INST]
-    const clean = text.split('[/INST]').pop()?.replace(/\[\/?INST\]/g, '').trim();
+    const clean = data?.choices?.[0]?.message?.content?.trim() || '';
     return clean && clean.length > 10 ? clean : null;
   } catch (err) {
     // Timeout, network error, JSON parse error — all fall through silently
-    console.warn('[MentorAgent] HF call failed:', err.message, '— using static fallback.');
+    console.warn('[MentorAgent] Groq call failed:', err.message, '— using static fallback.');
     return null;
   }
 }
@@ -120,14 +123,14 @@ function getStaticSuggestion(type) {
 // Also marks whether suggestion was AI-generated (used in AlertFeed Phase 5A badge).
 
 bus.subscribe(bus.EVENTS.ENGAGEMENT_ALERT, async (payload) => {
-  const hfSuggestion = await fetchHFSuggestion(payload.type, payload.message);
+  const aiSuggestion = await fetchGroqSuggestion(payload.type, payload.message);
 
-  payload.suggestion    = hfSuggestion || getStaticSuggestion(payload.type);
-  payload.suggestionAI  = Boolean(hfSuggestion); // true = HF-generated, false = static
+  payload.suggestion    = aiSuggestion || getStaticSuggestion(payload.type);
+  payload.suggestionAI  = Boolean(aiSuggestion); // true = Groq-generated, false = static
 
   console.log(
     `[MentorAgent] ${payload.type} → [${payload.suggestionAI ? 'AI' : 'static'}] "${payload.suggestion.slice(0, 70)}..."`
   );
 });
 
-module.exports = { getStaticSuggestion, fetchHFSuggestion };
+module.exports = { getStaticSuggestion, fetchGroqSuggestion };

@@ -2,13 +2,12 @@ import logging
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from typing import Optional
-from services.supabase_service import SupabaseService
+import db.py_store as _svc
 from agents.quiz_crew import run_quiz_analysis, run_quiz_crew
 from socket_manager import sio
 
 router = APIRouter()
 logger = logging.getLogger('engagex.quiz')
-_svc   = SupabaseService()
 
 
 class CreateQuizRequest(BaseModel):
@@ -43,14 +42,17 @@ async def generate_quiz(body: GenerateQuizRequest):
 @router.post('/', status_code=status.HTTP_201_CREATED)
 async def create_quiz(body: CreateQuizRequest):
     try:
-        quiz = _svc.create_quiz(
+        quiz = _svc.save_quiz(
             session_id=body.session_id,
-            teacher_id=body.teacher_id,
-            question=body.question,
-            quiz_type=body.quiz_type,
-            options=body.options,
-            correct_id=body.correct_id,
-            duration_s=body.duration_s,
+            topic=body.question,
+            payload={
+                'teacher_id': body.teacher_id,
+                'question': body.question,
+                'quiz_type': body.quiz_type,
+                'options': body.options,
+                'correct_id': body.correct_id,
+                'duration_s': body.duration_s,
+            }
         )
     except Exception as e:
         logger.error(f'create_quiz: {e}')

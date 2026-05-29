@@ -4,13 +4,11 @@ from collections import Counter
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from services.supabase_service import SupabaseService
+import db.py_store as _svc
 from agents.report_crew import run_report_crew, run_all_students
-from services.pdf_service import generate_pdf
 
 router = APIRouter()
 logger = logging.getLogger('engagex.report')
-_svc   = SupabaseService()
 
 
 class SessionSummaryRequest(BaseModel):
@@ -110,7 +108,7 @@ def generate_session_summary(body: SessionSummaryRequest):
         'students':              student_cards,
     }
     try:
-        _svc.save_session_report(body.session_id, report)
+        _svc.save_report(body.session_id, 'class_summary', report['most_common_alert_reason'] or '', report['students'])
     except Exception as e:
         logger.warning(f'save_session_report failed: {e}')
     return report
@@ -119,10 +117,14 @@ def generate_session_summary(body: SessionSummaryRequest):
 @router.get('/session/{session_id}', status_code=status.HTTP_200_OK)
 def get_saved_report(session_id: str):
     try:
-        r = _svc.get_latest_session_report(session_id)
-        if not r:
-            raise HTTPException(404, 'No saved report found')
-        return r
+        # Since local SQLite uses `reports` table, we fetch the latest for 'class_summary'
+        with _svc.get_db() as db:
+            r = db.execute("SELECT * FROM reports WHERE session_id = ? AND student_id = 'class_summary' ORDER BY created_at DESC LIMIT 1", (session_id,)).fetchone()
+            if not r:
+                raise HTTPException(404, 'No saved report found')
+            import json
+            data = dict(r)
+            return {'session_id': data['session_id'], 'students': json.loads(data['recommendations_json']), 'most_common_alert_reason': data['summary']}
     except HTTPException:
         raise
     except Exception as e:
@@ -145,19 +147,7 @@ def generate_all_pdfs(session_id: str):
     students = run_all_students(session_id)
 
     for rpt in students:
-        try:
-            pdf_bytes = generate_pdf(rpt, session_title)
-            url = _svc.upload_pdf(
-                session_id=session_id,
-                student_id=rpt.student_id,
-                pdf_bytes=pdf_bytes,
-            )
-            _svc.save_student_pdf_url(session_id, rpt.student_id, url)
-            results.append({'student_id': rpt.student_id, 'student_name': rpt.student_name, 'pdf_url': url})
-        except Exception as e:
-            logger.error(f'PDF gen student={rpt.student_id[:8]}: {e}')
-            results.append({'student_id': rpt.student_id, 'student_name': rpt.student_name, 'pdf_url': None, 'error': str(e)})
-
+        results.append({'student_id': rpt.student_id, 'student_name': rpt.student_name, 'pdf_url': None, 'error': 'PDF generation disabled'})
     return {'session_id': session_id, 'reports': results}
 
 
@@ -169,6 +159,7 @@ def stream_pdf(session_id: str, student_id: str):
             raise HTTPException(404, 'Session not found')
         session_title = state.get('title', 'EngageX Session')
         rpt       = run_report_crew(session_id, student_id)
+        from services.pdf_service import generate_pdf
         pdf_bytes = generate_pdf(rpt, session_title)
     except HTTPException:
         raise

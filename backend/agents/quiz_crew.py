@@ -2,23 +2,16 @@ import os
 import json
 import re
 import logging
-from services.supabase_service import SupabaseService
+import db.py_store as _svc
+from agents.llm_client import get_llm
 
 logger = logging.getLogger('engagex.quiz_crew')
-_svc = SupabaseService()
-
-GROQ_MODEL = os.getenv('GROQ_MODEL', 'llama3-8b-8192')
-GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
-
 
 def _get_llm():
-    from langchain_groq import ChatGroq
-    return ChatGroq(model=GROQ_MODEL, api_key=GROQ_API_KEY, temperature=0.3, max_tokens=400)
+    return get_llm(temperature=0.3, max_tokens=400)
 
 
 def run_quiz_crew(topic: str, session_context: str = '') -> dict:
-    if not GROQ_API_KEY:
-        return _deterministic_quiz(topic)
 
     try:
         from crewai import Agent, Task, Crew, Process
@@ -108,9 +101,6 @@ def run_quiz_analysis(quiz_id: str) -> dict:
     correct = sum(1 for response in responses if response.get('is_correct') is True)
     accuracy = round(correct / total * 100, 1) if total else 0
 
-    if not GROQ_API_KEY:
-        return _deterministic_analysis(quiz, accuracy, total, correct)
-
     llm = _get_llm()
     prompt = (
         f'Quiz question: {quiz.get("question")}\n'
@@ -124,7 +114,6 @@ def run_quiz_analysis(quiz_id: str) -> dict:
         match = re.search(r'\{.*\}', raw, re.DOTALL)
         if match:
             insights = json.loads(match.group())
-            _svc.save_quiz_insights(quiz_id, insights)
             return insights
     except Exception as exc:
         logger.warning(f'quiz_analysis failed: {exc}')

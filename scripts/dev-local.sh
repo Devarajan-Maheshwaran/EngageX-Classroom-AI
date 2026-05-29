@@ -1,24 +1,31 @@
-#!/usr/bin/env bash
-set -e
+#!/bin/bash
+# scripts/dev-local.sh
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+echo "Setting up local environment for EngageX..."
 
-cat > "$ROOT/frontend/.env.local" <<EOF
+# 1. Create .env.local for frontend
+cat << 'EOF' > frontend/.env.local
 VITE_BACKEND_URL=http://localhost:4000
 VITE_PYTHON_BACKEND_URL=http://localhost:4001
-VITE_SUPABASE_URL=${SUPABASE_URL:-https://cebnbdwvnkqkkwqyatbx.supabase.co}
-VITE_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
 EOF
+echo "Created frontend/.env.local"
 
-echo "Local frontend environment written."
-
-cd "$ROOT/backend" && node server.js &
+# 2. Run background services
+echo "Starting Node Backend on port 4000..."
+cd backend && node server.js &
 NODE_PID=$!
+cd ..
 
-cd "$ROOT/backend" && uvicorn main:app --host 0.0.0.0 --port 4001 &
+echo "Starting Python Backend on port 4001..."
+cd backend && python -m uvicorn main:app --port 4001 &
 PYTHON_PID=$!
+cd ..
 
-trap "kill $NODE_PID $PYTHON_PID 2>/dev/null || true" EXIT
+echo "Starting Frontend Vite server..."
+cd frontend && npm run dev &
+FRONTEND_PID=$!
+cd ..
 
-cd "$ROOT/frontend"
-npm run dev
+# Wait and cleanup on exit
+trap "echo 'Shutting down services...'; kill $NODE_PID $PYTHON_PID $FRONTEND_PID" EXIT
+wait

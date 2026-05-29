@@ -4,18 +4,13 @@ import json
 import re
 from collections import Counter
 from typing import Optional
-from services.supabase_service import SupabaseService
+import db.py_store as _svc
+from agents.llm_client import get_llm
 
 logger = logging.getLogger('engagex.report_crew')
-_svc = SupabaseService()
-
-GROQ_MODEL = os.getenv('GROQ_MODEL', 'llama3-8b-8192')
-GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
-
 
 def _get_llm():
-    from langchain_groq import ChatGroq
-    return ChatGroq(model=GROQ_MODEL, api_key=GROQ_API_KEY, temperature=0.3, max_tokens=500)
+    return get_llm(temperature=0.3, max_tokens=500)
 
 
 class StudentReportData:
@@ -200,8 +195,6 @@ def _deterministic_narrative(p: dict) -> tuple[str, list[str]]:
 
 
 def _write_narrative_crew(profile: dict) -> tuple[str, list[str]]:
-    if not GROQ_API_KEY:
-        return _deterministic_narrative(profile)
 
     try:
         from crewai import Agent, Task, Crew, Process

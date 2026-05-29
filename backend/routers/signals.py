@@ -4,13 +4,12 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from typing import Optional
-from services.supabase_service import SupabaseService
+import db.py_store as _svc
 from agents.signal_aggregator import run_aggregation
 from socket_manager import sio
 
 router = APIRouter()
 logger = logging.getLogger('engagex.signals')
-_svc   = SupabaseService()
 
 EMOTION_SCORE = {
     'happy': 90,

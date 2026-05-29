@@ -1,13 +1,10 @@
 import os
 import logging
 from typing import Optional
-from services.supabase_service import SupabaseService
+import db.py_store as _svc
+from agents.llm_client import get_llm
 
 logger = logging.getLogger('engagex.aggregator')
-_svc = SupabaseService()
-
-GROQ_MODEL   = os.getenv('GROQ_MODEL',   'llama3-8b-8192')
-GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 
 WEIGHTS = {
     'vision':        0.35,
@@ -56,7 +53,6 @@ def _deterministic_message(score: float, signals: list[dict], student_name: str)
 
 
 def _groq_message(score: float, signals: list[dict], student_name: str) -> str:
-    from langchain_groq import ChatGroq
     import json, re
     context = [
         {
@@ -75,7 +71,7 @@ def _groq_message(score: float, signals: list[dict], student_name: str) -> str:
         "Write one concise sentence (max 20 words) telling the teacher exactly why this student needs attention."
     )
     try:
-        llm  = ChatGroq(model=GROQ_MODEL, api_key=GROQ_API_KEY, temperature=0.2, max_tokens=60)
+        llm  = get_llm(temperature=0.2, max_tokens=60)
         resp = llm.invoke(prompt)
         return (resp.content if hasattr(resp, 'content') else str(resp)).strip()
     except Exception as e:
