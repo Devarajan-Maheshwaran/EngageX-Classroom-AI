@@ -1,11 +1,9 @@
 import os
 import socketio
 
-CORS_ORIGINS = [
-    o.strip()
-    for o in os.getenv('CORS_ORIGINS', 'http://localhost:3000').split(',')
-    if o.strip()
-]
+CORS_ORIGINS = os.getenv('CORS_ORIGINS', '*')
+if CORS_ORIGINS != '*':
+    CORS_ORIGINS = [o.strip() for o in CORS_ORIGINS.split(',') if o.strip()]
 
 sio = socketio.AsyncServer(
     async_mode='asgi',

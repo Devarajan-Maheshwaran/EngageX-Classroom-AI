@@ -14,12 +14,9 @@ from middleware.rate_limiter import RateLimitMiddleware
 
 load_dotenv()
 
-ALLOWED_ORIGINS = [
-    o.strip()
-    for o in os.getenv('CORS_ORIGINS', 'http://localhost:3000').split(',')
-    if o.strip()
-]
-
+ALLOWED_ORIGINS = os.getenv('CORS_ORIGINS', '*')
+if ALLOWED_ORIGINS != '*':
+    ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS.split(',') if o.strip()]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -40,13 +37,23 @@ fastapi_app = FastAPI(
 )
 
 fastapi_app.add_middleware(RateLimitMiddleware)
-fastapi_app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=['*'],
-    allow_headers=['*'],
-)
+
+if ALLOWED_ORIGINS == '*':
+    fastapi_app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex='.*',
+        allow_credentials=True,
+        allow_methods=['*'],
+        allow_headers=['*'],
+    )
+else:
+    fastapi_app.add_middleware(
+        CORSMiddleware,
+        allow_origins=ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=['*'],
+        allow_headers=['*'],
+    )
 
 fastapi_app.include_router(sessions.router,    prefix='/api/sessions',   tags=['Sessions'])
 fastapi_app.include_router(signals.router,     prefix='/api/signals',    tags=['Signals'])
