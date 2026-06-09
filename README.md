@@ -1,13 +1,12 @@
-# EngageX — AI Meeting Co-Pilot 🎙️
+# EngageX Classroom AI
 
-> The AI engagement layer your Google Meet / Zoom / Teams calls are missing.
-> Open EngageX alongside your existing call. Participants join with a code.
-> EngageX watches engagement signals and surfaces live AI alerts — so no one gets left behind silently.
+> Real-time AI engagement layer for live teaching sessions.
+> Students join with a code. EngageX monitors attention signals and surfaces
+> live alerts so no one falls behind silently.
 
-[![Deploy Frontend](https://img.shields.io/badge/Frontend-Vercel-black?logo=vercel)](https://vercel.com)
+[![Frontend](https://img.shields.io/badge/Frontend-Vercel-black?logo=vercel)](https://vercel.com)
 [![Backend](https://img.shields.io/badge/Backend-Railway-blueviolet?logo=railway)](https://railway.app)
-[![AI](https://img.shields.io/badge/AI-Transformers.js-orange?logo=huggingface)](https://huggingface.co/docs/transformers.js)
-[![No API Key](https://img.shields.io/badge/AI%20models-local%2C%20no%20API%20key-brightgreen)]()
+[![AI](https://img.shields.io/badge/AI-Groq-orange)](https://groq.com)
 
 ---
 
@@ -15,54 +14,65 @@
 
 | Signal | How EngageX surfaces it |
 |---|---|
-| 🔇 Silent participants | Flags anyone inactive 3+ min (configurable) — gentle alert + AI suggestion |
-| 💬 Live sentiment | DistilBERT SST-2 runs **locally** on every message — no API key |
-| 🧠 Engagement intent | DeBERTa NLI zero-shot classifies: confused / frustrated / excited / engaged |
-| ⚖️ Participation imbalance | Tracks contribution ratio, alerts when <35% of room has spoken |
-| 🌊 Confusion spikes | 3+ confused signals in 5 min → CONFUSION_SPIKE alert fires automatically |
-| 🤖 AI suggestions | Every alert gets a concrete host action (HF Mistral if key set, static fallback) |
+| Silent participants | Flags anyone inactive 3+ min — alert + AI suggestion |
+| Live sentiment | DistilBERT SST-2 runs locally on every message |
+| Engagement intent | DeBERTa NLI zero-shot: confused / frustrated / excited / engaged |
+| Participation imbalance | Tracks contribution ratio, alerts when < 35% of room has spoken |
+| Confusion spikes | 3+ confused signals in 5 min fires CONFUSION_SPIKE automatically |
+| AI quiz generation | Groq LLM generates MCQs from a topic, manual input, or uploaded PDF |
+| Vision signals | FER lightweight face emotion detection — no CUDA required |
+| Audio transcription | Groq Whisper large-v3 API — no local model download |
 
 ---
 
 ## Architecture
 
 ```
-                        ┌─────────────────────────────────────┐
-                        │         LangGraph State Machine      │
-                        │  IDLE→MONITOR→CLASSIFY→BALANCE→LOG  │
-                        └───────────────┬─────────────────────┘
-                                        │ coordinates
-           ┌────────────────────────────┼───────────────────────┐
-    monitorAgent          balancerAgent │              mentorAgent
-  (silent 3+ min)      (<35% spoken)   │          (AI suggestions)
-           └────────────────────────────┘
-                        │ fires via eventBus
-  ┌─────────────────────▼──────────────────────────┐
-  │               Socket.IO Server                  │
-  │  sentiment (DistilBERT) + intent (DeBERTa NLI)  │
-  │  confusionTracker: spike detection (3 in 5 min) │
-  └───────┬──────────────────────────────┬──────────┘
-          │                              │
-  ┌───────▼──────┐               ┌───────▼───────┐
-  │ Host Dashboard│               │ Participant    │
-  │  /host        │               │  /join         │
-  └──────────────┘               └───────────────┘
+                    +-------------------------------------+
+                    |       LangGraph State Machine        |
+                    |  IDLE > MONITOR > CLASSIFY > LOG    |
+                    +----------------+--------------------+
+                                     | coordinates
+       +-----------------------------+-----------------------------+
+ monitorAgent              balancerAgent                  mentorAgent
+ (silent 3+ min)         (< 35% spoken)              (AI suggestions)
+       +-----------------------------+
+                    | fires via eventBus
+  +-----------------+------------------------------------------+
+  |                 Socket.IO Server (Node.js)                   |
+  |  sentiment (DistilBERT) + intent (DeBERTa NLI)               |
+  |  confusionTracker: spike detection (3 in 5 min)              |
+  +---------+------------------------------------+---------------+
+            |                                    |
+  +---------+----------+             +-----------+-----------+
+  | Teacher Dashboard  |             | Student Join (/join)  |
+  | /host              |             +-----------------------+
+  +--------------------+
+
+  Python FastAPI backend (port 4001)
+    /api/signals/vision  -- FER face emotion
+    /api/signals/audio   -- Groq Whisper transcription + vocal energy
+    /api/quiz/generate   -- Groq LLM topic-based MCQ
+    /api/quiz/from-pdf   -- pdfplumber extract + Groq LLM MCQ
 ```
+
+---
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Backend | Node.js 18 + Express + Socket.IO 4 |
-| Sentiment AI | `Xenova/distilbert-base-uncased-finetuned-sst-2-english` (~67 MB, local) |
-| Intent AI | `Xenova/nli-deberta-v3-small` (~85 MB, local, zero-shot) |
-| LLM suggestions | HuggingFace Inference API (free, optional) — static fallback if no key |
-| Agent orchestration | LangGraph-style explicit state machine in JS |
-| Frontend | React 18 + Vite + Tailwind CSS + Recharts |
-| Deploy | Vercel (frontend) + Railway (backend) |
-
-> **No database needed for demo.** All session state is in-memory on Railway.
-> Phase 4 adds optional Supabase persistence for post-session reports.
+| Node backend | Node.js 20, Express, Socket.IO 4 |
+| Python backend | FastAPI, Uvicorn, python-socketio |
+| Sentiment | Xenova/distilbert-base-uncased-finetuned-sst-2-english (local) |
+| Intent | Xenova/nli-deberta-v3-small (local, zero-shot) |
+| Transcription | Groq Whisper large-v3 API |
+| LLM | Groq (llama-3 / mixtral) |
+| Vision | FER + OpenCV headless (no CUDA) |
+| PDF extraction | pdfplumber |
+| Agent orchestration | LangGraph-style state machine in JS |
+| Frontend | React 18, Vite, Tailwind CSS, Recharts, Lucide |
+| Deploy | Vercel (frontend), Railway (backend) |
 
 ---
 
@@ -71,23 +81,36 @@
 ```
 backend/
   agents/
-    agentOrchestrator.js   LangGraph state machine (MONITOR→CLASSIFY→BALANCE→INTERVENE→LOG)
-    monitorAgent.js        Silent participant polling (configurable threshold)
-    balancerAgent.js       Participation ratio checker
-    mentorAgent.js         AI suggestion generator (HF + static fallback)
+    agentOrchestrator.js     LangGraph state machine
+    monitorAgent.js          Silent participant polling
+    balancerAgent.js         Participation ratio checker
+    mentorAgent.js           AI suggestion generator
+  routers/
+    signals.py               Vision + audio signal ingestion
+    quiz.py                  AI quiz generation
+    quiz_pdf.py              PDF-to-quiz endpoint
+    sessions.py              Session lifecycle
+    report.py                Post-session report
   services/
-    eventBus.js            EventEmitter pub/sub backbone
-    participationService.js  Per-participant tracking & scoring
-    sentimentService.js    DistilBERT SST-2 sentiment (local)
-    classifierService.js   DeBERTa NLI zero-shot intent (local)
-    confusionTracker.js    Rolling confusion spike detector
-    analyticsService.js    In-memory session analytics
+    whisper_service.py       Groq Whisper transcription
+    vocal_emotion_service.py Pure-Python RMS energy classifier
+    eventBus.js              Pub/sub backbone
+    participationService.js  Per-participant tracking
+    sentimentService.js      DistilBERT SST-2 (local)
+    classifierService.js     DeBERTa NLI zero-shot (local)
+    analyticsService.js      In-memory session analytics
   server.js
+  main.py
 frontend/
   src/
-    pages/     Home · HostDashboard · ParticipantJoin
-    components/ ParticipantGrid · SentimentTimeline · AlertFeed · SessionHeader
-    hooks/     useMeetingSocket
+    pages/       Home, HostDashboard, ParticipantJoin
+    components/  AIInsightPanel, QuizBuilder, PDFQuizUploader,
+                 QuizModal, AlertFeed, ParticipantGrid
+    hooks/       useMeetingSocket
+scripts/
+  dev-local.sh           Start all services locally
+  dev-vercel-backend.sh  Start backends + localtunnel for Vercel frontend
+  start-tunnels.ps1      Windows PowerShell equivalent
 ```
 
 ---
@@ -95,72 +118,65 @@ frontend/
 ## Quick Start (local)
 
 ```bash
-# Backend
+# Clone and install
+git clone https://github.com/Devarajan-Maheshwaran/EngageX-Classroom-AI.git
+cd EngageX-Classroom-AI
+
+# Node backend
 cd backend
 npm install
-cp .env.example .env
-npm run dev          # → http://localhost:4000
+cp .env.example .env          # add GROQ_API_KEY
+npm run dev                   # http://localhost:4000
+
+# Python backend (new terminal)
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate     # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --port 4001 --reload   # http://localhost:4001
 
 # Frontend (new terminal)
 cd frontend
 npm install
-cp .env.example .env.local   # set VITE_BACKEND_URL=http://localhost:4000
-npm run dev          # → http://localhost:5173
+cp .env.example .env.local    # VITE_BACKEND_URL=http://localhost:4000
+                               # VITE_PYTHON_BACKEND_URL=http://localhost:4001
+npm run dev                   # http://localhost:5173
 ```
 
-Flow to test:
-1. Open `http://localhost:5173` → click **Start a new session**
-2. Copy the 6-char session code
-3. In a second tab open `/join` → enter code + name
-4. Send a message like `"I'm confused about this"` from the participant tab
-5. Watch the host dashboard: intent badge updates, sentiment chart plots, and after 3 confused messages a CONFUSION_SPIKE alert fires
+Or use the convenience script:
+
+```bash
+bash scripts/dev-local.sh
+```
+
+### Test flow
+1. Open `http://localhost:5173` and click **Start a new session**
+2. Copy the 6-character session code
+3. Open a second tab at `/join` — enter the code and a name
+4. Send `I am confused about this` from the student tab
+5. Watch the teacher dashboard: intent badge updates, sentiment chart plots,
+   and after 3 confused messages a CONFUSION_SPIKE alert fires
+6. Use the AI panel quiz tabs to generate an MCQ by topic, build one manually,
+   or upload a PDF to extract questions
 
 ---
 
 ## Deploy (Local Backends + Vercel Frontend)
 
-This project uses a hybrid deployment model:
-- **Frontend**: Deployed to Vercel for public access.
-- **Backend**: Runs locally via Docker and is exposed securely to the internet using **Ngrok** and **Localtunnel** (to bypass Ngrok's single-tunnel free limit).
+1. Start backends locally:
+   ```bash
+   bash scripts/dev-vercel-backend.sh
+   ```
+   The script starts both backends and opens two localtunnel URLs.
 
-### 1. Run Backend Locally (Docker)
-Ensure Docker is running, then start the Node.js and Python backends:
-```bash
-docker-compose up -d backend-node backend-python
-```
+2. Push the repository to GitHub and import into Vercel.
+   Set framework preset to `Vite`, root directory to `frontend`.
 
-### 2. Expose Backends to the Internet
-We provide scripts to automatically spin up tunnels for both backends.
-- **On Windows:**
-  Open PowerShell as Administrator and run:
-  ```powershell
-  ./scripts/start-tunnels.ps1
-  ```
-- **On Mac/Linux:**
-  ```bash
-  chmod +x scripts/dev-tunnel.sh
-  ./scripts/dev-tunnel.sh
-  ```
-The script will output two public URLs (one Ngrok, one Localtunnel). Keep this script running.
+3. Add environment variables in the Vercel dashboard:
+   - `VITE_BACKEND_URL` — Node localtunnel URL
+   - `VITE_PYTHON_BACKEND_URL` — Python localtunnel URL
 
-### 3. Deploy Frontend to Vercel
-1. Push this repository to GitHub and import it into Vercel.
-2. Set the **Framework Preset** to `Vite` and **Root Directory** to `frontend`.
-3. Add the following Environment Variables in the Vercel dashboard using the URLs generated in step 2:
-   - `VITE_BACKEND_URL`: Your Ngrok URL (e.g., `https://abc-123.ngrok-free.app`)
-   - `VITE_PYTHON_BACKEND_URL`: Your Localtunnel URL (e.g., `https://fuzzy-ants-jump.loca.lt`)
-4. Deploy! 
+4. Deploy. The frontend is live while your local backends and tunnels are running.
 
-> **Important:** Your Vercel frontend will only work while your local Docker containers and tunnels are running. Localtunnel may show a "Click to Continue" reminder page the first time you visit; if your Python AI features fail, open the Localtunnel URL in your browser once and accept it.
-
----
-
-## Build Phases
-
-| Phase | Goal | Status |
-|---|---|---|
-| 1 | Scaffold: eventBus → participation → sentiment → server → agents | ✅ Done |
-| 2 | Backend hardening + Frontend rebuild (Meet/Zoom co-pilot UI) | ✅ Done |
-| 3 | Zero-shot intent classifier + confusion spike + full LangGraph loop | ✅ Done |
-| 4 | Post-session summary drawer + jsPDF report + demo seed mode | 🔄 Next |
-| 5 | Deploy: Railway + Vercel + optional Supabase persistence | ⏳ |
+> If Python AI features fail on first load, open the localtunnel URL directly
+> in a browser tab once and accept the reminder page.

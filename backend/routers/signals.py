@@ -1,6 +1,5 @@
 import logging
 import base64
-import numpy as np
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from typing import Optional
@@ -11,15 +10,15 @@ from socket_manager import sio
 router = APIRouter()
 logger = logging.getLogger('engagex.signals')
 
-EMOTION_SCORE = {
-    'happy': 90,
-    'surprise': 85,
-    'neutral': 60,
-    'sad': 35,
-    'fear': 30,
-    'fearful': 30,
-    'angry': 20,
-    'disgust': 15,
+EMOTION_SCORE: dict[str, int] = {
+    'happy':     90,
+    'surprise':  85,
+    'neutral':   60,
+    'sad':       35,
+    'fear':      30,
+    'fearful':   30,
+    'angry':     20,
+    'disgust':   15,
     'disgusted': 15,
 }
 
@@ -56,8 +55,8 @@ async def ingest_signal(body: SignalPayload):
             signal_data=body.signal_data,
             engagement_score=body.engagement_score,
         )
-    except Exception as e:
-        logger.error(f'ingest_signal: {e}')
+    except Exception as exc:
+        logger.error('ingest_signal: %s', exc)
         raise HTTPException(500, 'Failed to save signal')
     await sio.emit('signal_ack', {'id': row['id']}, room=body.session_id)
     return {'id': row['id'], 'status': 'saved'}
@@ -65,46 +64,44 @@ async def ingest_signal(body: SignalPayload):
 
 @router.post('/vision', status_code=status.HTTP_201_CREATED)
 async def ingest_vision(body: VisionPayload):
+    # Decode base64 frame
     try:
         import cv2
+        import numpy as np
         img_bytes = base64.b64decode(body.frame_b64)
-        nparr = np.frombuffer(img_bytes, np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        nparr     = np.frombuffer(img_bytes, np.uint8)
+        frame     = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if frame is None:
-            raise ValueError('decode failed')
-    except Exception:
-        raise HTTPException(400, 'Invalid base64 image')
+            raise ValueError('cv2.imdecode returned None')
+    except Exception as exc:
+        logger.warning('Vision frame decode failed: %s', exc)
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Invalid base64 image')
 
     dominant_emotion = 'neutral'
     engagement_score = 60.0
-    looking_away = False
+    looking_away     = False
 
+    # FER is the primary analyser — lightweight, no CUDA required
     try:
-        from deepface import DeepFace
-        result = DeepFace.analyze(frame, actions=['emotion'], enforce_detection=False, silent=True)
-        if isinstance(result, list):
-            result = result[0] if result else {}
-        dominant_emotion = result.get('dominant_emotion', 'neutral')
-        engagement_score = float(EMOTION_SCORE.get(dominant_emotion, 60))
-        face_confidence = result.get('face_confidence', 1.0)
-        looking_away = face_confidence < 0.3
+        from fer import FER
+        detector   = FER(mtcnn=False)
+        detections = detector.detect_emotions(frame)
+        if detections:
+            emotions         = detections[0].get('emotions', {})
+            dominant_emotion = max(emotions, key=emotions.get) if emotions else 'neutral'
+            engagement_score = float(EMOTION_SCORE.get(dominant_emotion, 60))
+            box              = detections[0].get('box', [])
+            if box:
+                # Treat faces in the far-top corner as looking away
+                frame_h = frame.shape[0]
+                face_y  = box[1] if len(box) > 1 else 0
+                looking_away = face_y < frame_h * 0.1
     except Exception as exc:
-        logger.warning(f'DeepFace failed: {exc}; using FER fallback')
-        try:
-            from fer import FER
-            detector = FER(mtcnn=False)
-            detections = detector.detect_emotions(frame)
-            if detections:
-                emotions = detections[0].get('emotions', {})
-                top = max(emotions, key=emotions.get)
-                dominant_emotion = top
-                engagement_score = float(EMOTION_SCORE.get(top, 60))
-        except Exception as exc2:
-            logger.warning(f'FER fallback also failed: {exc2}')
+        logger.warning('FER analysis failed: %s — defaulting to neutral', exc)
 
     signal_data = {
-        'dominant_emotion': dominant_emotion,
-        'looking_away': looking_away,
+        'dominant_emotion':   dominant_emotion,
+        'looking_away':       looking_away,
         'looking_away_ratio': 1.0 if looking_away else 0.0,
     }
 
@@ -117,32 +114,32 @@ async def ingest_vision(body: VisionPayload):
             engagement_score=engagement_score,
         )
     except Exception as exc:
-        logger.error(f'save vision signal: {exc}')
+        logger.error('save vision signal: %s', exc)
         raise HTTPException(500, 'Failed to save vision signal')
 
     agg = run_aggregation(body.session_id, body.student_id, body.student_name)
     if agg.get('alert_type'):
         await sio.emit('engagement:alert', {
-            'sessionId': body.session_id,
-            'studentId': body.student_id,
+            'sessionId':   body.session_id,
+            'studentId':   body.student_id,
             'studentName': body.student_name,
-            'type': agg['alert_type'].upper(),
-            'message': agg['alert']['message'] if agg.get('alert') else '',
-            'fusedScore': agg['fused_score'],
-            'source': 'vision',
+            'type':        agg['alert_type'].upper(),
+            'message':     agg['alert']['message'] if agg.get('alert') else '',
+            'fusedScore':  agg['fused_score'],
+            'source':      'vision',
         }, room=body.session_id)
 
     await sio.emit('vision_ack', {
-        'student_id': body.student_id,
+        'student_id':       body.student_id,
         'dominant_emotion': dominant_emotion,
         'engagement_score': engagement_score,
-        'looking_away': looking_away,
+        'looking_away':     looking_away,
     }, room=body.session_id)
 
     return {
         'dominant_emotion': dominant_emotion,
         'engagement_score': engagement_score,
-        'signal_id': row['id'],
+        'signal_id':        row['id'],
     }
 
 
@@ -151,36 +148,36 @@ async def ingest_audio(body: AudioPayload):
     try:
         audio_bytes = base64.b64decode(body.audio_b64)
     except Exception:
-        raise HTTPException(400, 'Invalid base64 audio')
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Invalid base64 audio')
 
-    transcript = ''
-    vocal_emotion = 'neutral'
+    transcript       = ''
+    vocal_emotion    = 'neutral'
     engagement_score = 60.0
 
     try:
         from services.whisper_service import transcribe_audio
         transcript = transcribe_audio(audio_bytes) or ''
     except Exception as exc:
-        logger.warning(f'Audio transcription failed: {exc}')
+        logger.warning('Audio transcription failed: %s', exc)
 
     try:
         from services.vocal_emotion_service import extract_vocal_features, score_from_vocal
         features = extract_vocal_features(audio_bytes)
         if features:
-            vocal_emotion = features.get('emotion', 'neutral')
+            vocal_emotion    = features.get('emotion', 'neutral')
             engagement_score = float(score_from_vocal(features))
     except Exception as exc:
-        logger.warning(f'Vocal emotion analysis failed: {exc}')
+        logger.warning('Vocal emotion analysis failed: %s', exc)
 
-    emotion_to_score = {
-        'happy': 85,
-        'calm': 75,
-        'engaged': 80,
-        'neutral': 60,
+    emotion_to_score: dict[str, int] = {
+        'happy':      85,
+        'calm':       75,
+        'engaged':    80,
+        'neutral':    60,
         'disengaged': 35,
-        'sad': 35,
-        'angry': 20,
-        'fearful': 25,
+        'sad':        35,
+        'angry':      20,
+        'fearful':    25,
     }
     engagement_score = float(emotion_to_score.get(vocal_emotion, engagement_score))
 
@@ -195,26 +192,26 @@ async def ingest_audio(body: AudioPayload):
             engagement_score=engagement_score,
         )
     except Exception as exc:
-        logger.error(f'save audio signal: {exc}')
+        logger.error('save audio signal: %s', exc)
         raise HTTPException(500, 'Failed to save audio signal')
 
     agg = run_aggregation(body.session_id, body.student_id, body.student_name)
     if agg.get('alert_type'):
         await sio.emit('engagement:alert', {
-            'sessionId': body.session_id,
-            'studentId': body.student_id,
+            'sessionId':   body.session_id,
+            'studentId':   body.student_id,
             'studentName': body.student_name,
-            'type': agg['alert_type'].upper(),
-            'message': agg['alert']['message'] if agg.get('alert') else '',
-            'fusedScore': agg['fused_score'],
-            'source': 'audio',
+            'type':        agg['alert_type'].upper(),
+            'message':     agg['alert']['message'] if agg.get('alert') else '',
+            'fusedScore':  agg['fused_score'],
+            'source':      'audio',
         }, room=body.session_id)
 
     return {
-        'transcript': transcript,
-        'vocal_emotion': vocal_emotion,
+        'transcript':       transcript,
+        'vocal_emotion':    vocal_emotion,
         'engagement_score': engagement_score,
-        'signal_id': row['id'],
+        'signal_id':        row['id'],
     }
 
 
