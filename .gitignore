@@ -1,7 +1,44 @@
+# Dependencies
 node_modules/
+
+# Environment files
 .env
+.env.*
+*.env
+
+# Build output
 dist/
-.cache/
-*.log
-backend/.cache/
+build/
 frontend/dist/
+
+# Logs
+*.log
+logs/
+
+# Cache
+.cache/
+backend/.cache/
+.vite/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Database files
+data/*.db
+data/*.sqlite
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+.idea/
