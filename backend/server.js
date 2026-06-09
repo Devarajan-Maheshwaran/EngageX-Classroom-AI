@@ -1,14 +1,9 @@
-// server.js — EngageX backend
-// Phase 5B: /api/session/:sessionId/summary now merges participation snapshot
-// server.js — EngageX backend
-// Phase 5B: /api/session/:sessionId/summary now merges participation snapshot
-//           into the analytics report so the recap page has full student data.
 const express    = require('express');
 const http       = require('http');
 const { Server } = require('socket.io');
 const cors       = require('cors');
 const { nanoid } = require('nanoid');
-const nodeStore = require('./db/nodeStore');
+const nodeStore  = require('./db/nodeStore');
 
 const bus                  = require('./services/eventBus');
 const participationService = require('./services/participationService');
@@ -21,18 +16,45 @@ const orchestrator         = require('./agents/agentOrchestrator');
 const app    = express();
 const server = http.createServer(app);
 
-app.use(cors());
+// ─── CORS ────────────────────────────────────────────────────────────────────
+
+const IS_PROD = process.env.NODE_ENV === 'production';
+
+const corsOrigin = IS_PROD
+  ? [
+      process.env.FRONTEND_URL,
+      /\.loca\.lt$/,
+      /\.vercel\.app$/,
+    ].filter(Boolean)
+  : true;
+
+app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(express.json());
+
+// ─── SOCKET.IO ───────────────────────────────────────────────────────────────
+
+const io = new Server(server, {
+  cors: { origin: corsOrigin, methods: ['GET', 'POST'] },
+  transports: ['websocket', 'polling'],
+  pingTimeout:  60000,
+  pingInterval: 25000,
+});
+
+// ─── STATE ───────────────────────────────────────────────────────────────────
 
 const activeSessions = new Set();
 const MAX_MSG_LEN    = parseInt(process.env.MAX_MSG_LEN || '500', 10);
 
-// ─── STARTUP warmup ──────────────────────────────────────────────────────────
+// In-memory quiz response counters: { [quizId]: { count, total } }
+const quizResponseCounts = {};
+
+// ─── STARTUP WARMUP ──────────────────────────────────────────────────────────
+
 (async () => {
   try {
     await sentimentService.loadModel();
     await classifierService.loadModel();
-    console.log('[EngageX] All AI models ready.');
+    console.log('[EngageX] AI models ready.');
   } catch (err) {
     console.error('[EngageX] Model warm-up error:', err.message);
     console.warn('[EngageX] Models will load lazily on first use.');
@@ -47,10 +69,10 @@ app.post('/api/session/create', (_req, res) => {
   const sessionId = nanoid(6).toUpperCase();
   analyticsService.initSession(sessionId);
   nodeStore.insertSession({
-    id: sessionId,
-    join_code: sessionId,
-    title: 'Live Session',
-    status: 'active',
+    id:         sessionId,
+    join_code:  sessionId,
+    title:      'Live Session',
+    status:     'active',
     started_at: new Date().toISOString(),
   });
   orchestrator.startSession(sessionId);
@@ -59,11 +81,9 @@ app.post('/api/session/create', (_req, res) => {
   res.json({ sessionId });
 });
 
-// Phase 5B: merge participation snapshot into analytics report
 app.get('/api/session/:sessionId/summary', (req, res) => {
   const { sessionId } = req.params;
   const report   = analyticsService.getSessionReport(sessionId);
-  // Merge in live (or last-known) participant data
   const snapshot = participationService.getSnapshot(sessionId);
   report.students = snapshot;
   res.json(report);
@@ -84,7 +104,7 @@ app.get('/api/session/:sessionId/state', (req, res) => {
   });
 });
 
-// ─── SOCKET.IO ───────────────────────────────────────────────────────────────
+// ─── SOCKET CONNECTIONS ──────────────────────────────────────────────────────
 
 io.on('connection', (socket) => {
   const rawRole      = socket.handshake.query.role      || '';
@@ -114,19 +134,23 @@ io.on('connection', (socket) => {
   if (role === 'student') {
     const joinType = participationService.registerStudent(sessionId, socket.id, name);
     nodeStore.upsertSessionStudent({
-      session_id: sessionId,
+      session_id:  sessionId,
       student_name: name,
-      socket_id: socket.id,
-      joined_at: new Date().toISOString()
+      socket_id:   socket.id,
+      joined_at:   new Date().toISOString(),
     });
     bus.publish(bus.EVENTS.STUDENT_JOIN, { sessionId, studentId: socket.id, name });
     io.to(sessionId).emit('participant:joined', {
-      participantId: socket.id, name, reconnect: joinType === 'restored',
+      participantId: socket.id,
+      name,
+      reconnect: joinType === 'restored',
     });
     const snapshot = participationService.getSnapshot(sessionId);
     socket.emit('room:state', { sessionId, students: snapshot, ts: Date.now() });
-    console.log(`[Join]  ${name} → ${sessionId} (${joinType})`);
+    console.log(`[Join]  ${name} -> ${sessionId} (${joinType})`);
   }
+
+  // ── Text messages ──────────────────────────────────────────────────────────
 
   socket.on('student:message', async ({ text } = {}) => {
     if (!text || typeof text !== 'string') return;
@@ -143,41 +167,79 @@ io.on('connection', (socket) => {
     ]);
 
     const sentiment = sentimentResult.status === 'fulfilled'
-      ? sentimentResult.value : { label: 'POSITIVE', score: 0.5 };
+      ? sentimentResult.value
+      : { label: 'POSITIVE', score: 0.5 };
     const intent = intentResult.status === 'fulfilled'
-      ? intentResult.value : { label: 'engaged', score: 0.5, allScores: {} };
+      ? intentResult.value
+      : { label: 'engaged', score: 0.5, allScores: {} };
 
     participationService.recordMessage(sessionId, socket.id, intent.label, intent.score);
     analyticsService.logSentiment(
       sessionId, socket.id,
       sentiment.label, sentiment.score,
-      intent.label, intent.score, intent.allScores
+      intent.label, intent.score, intent.allScores,
     );
+
     const engScore = Math.round(
       (intent.label === 'confused' || intent.label === 'frustrated' ? 25 :
        intent.label === 'engaged'  || intent.label === 'excited'    ? 85 : 60) *
-      (sentiment.label === 'POSITIVE' ? 1.0 : sentiment.label === 'NEGATIVE' ? 0.6 : 0.8)
+      (sentiment.label === 'POSITIVE' ? 1.0 : sentiment.label === 'NEGATIVE' ? 0.6 : 0.8),
     );
+
     nodeStore.logTextSignal({
-      session_id: sessionId,
-      student_id: socket.id,
-      ts: new Date().toISOString(),
-      text: trimmed,
-      sentiment_label: sentiment.label,
-      sentiment_score: sentiment.score,
-      intent_label: intent.label,
-      intent_score: intent.score,
+      session_id:       sessionId,
+      student_id:       socket.id,
+      ts:               new Date().toISOString(),
+      text:             trimmed,
+      sentiment_label:  sentiment.label,
+      sentiment_score:  sentiment.score,
+      intent_label:     intent.label,
+      intent_score:     intent.score,
       engagement_score: engScore,
     });
-    bus.publish(bus.EVENTS.STUDENT_MESSAGE, { sessionId, studentId: socket.id, text: trimmed, sentiment, intent });
-    io.to(sessionId).emit('sentiment:update', {
-      participantId: socket.id, name, text: trimmed,
-      label: sentiment.label, score: sentiment.score,
-      intentLabel: intent.label, intentScore: intent.score, allScores: intent.allScores,
-      ts: Date.now(),
+
+    bus.publish(bus.EVENTS.STUDENT_MESSAGE, {
+      sessionId, studentId: socket.id, text: trimmed, sentiment, intent,
     });
+
+    io.to(sessionId).emit('sentiment:update', {
+      participantId: socket.id,
+      name,
+      text:         trimmed,
+      label:        sentiment.label,
+      score:        sentiment.score,
+      intentLabel:  intent.label,
+      intentScore:  intent.score,
+      allScores:    intent.allScores,
+      ts:           Date.now(),
+    });
+
     engagementService.checkForConfusionSpike(sessionId);
   });
+
+  // ── Quiz responses ─────────────────────────────────────────────────────────
+
+  socket.on('student:quiz_response', ({ quizId, answerId } = {}) => {
+    if (!quizId || role !== 'student') return;
+
+    if (!quizResponseCounts[quizId]) {
+      const total = participationService.getSnapshot(sessionId).length;
+      quizResponseCounts[quizId] = { count: 0, total };
+    }
+    quizResponseCounts[quizId].count += 1;
+
+    const { count, total } = quizResponseCounts[quizId];
+
+    // Emit updated count only to the teacher socket in this session
+    const teacherSocket = [...io.sockets.sockets.values()].find(
+      (s) => s.data.sessionId === sessionId && s.data.role === 'teacher',
+    );
+    if (teacherSocket) {
+      teacherSocket.emit('quiz:response_count', { quizId, count, total });
+    }
+  });
+
+  // ── Utility ────────────────────────────────────────────────────────────────
 
   socket.on('request:state', () => {
     const snapshot = participationService.getSnapshot(sessionId);
@@ -202,27 +264,32 @@ io.on('connection', (socket) => {
       nodeStore.removeSessionStudent(sessionId, socket.id, new Date().toISOString());
       bus.publish(bus.EVENTS.STUDENT_LEAVE, { sessionId, studentId: socket.id });
       io.to(sessionId).emit('participant:left', { participantId: socket.id, name });
-      console.log(`[Leave] ${name} ← ${sessionId} (${reason})`);
+      console.log(`[Leave] ${name} <- ${sessionId} (${reason})`);
     }
   });
 });
 
-// ─── 10s ROOM:STATE BROADCAST ────────────────────────────────────────────────
+// ─── PERIODIC ROOM STATE BROADCAST ──────────────────────────────────────────
+
 setInterval(() => {
   activeSessions.forEach((sessionId) => {
     const snapshot = participationService.getSnapshot(sessionId);
     io.to(sessionId).emit('room:state', { sessionId, students: snapshot, ts: Date.now() });
   });
-}, 10000);
+}, 10_000);
 
-// ─── FORWARD AGENT ALERTS → SOCKET ROOMS ────────────────────────────────────
+// ─── AGENT ALERT FORWARDING ──────────────────────────────────────────────────
+
 bus.subscribe(bus.EVENTS.ENGAGEMENT_ALERT, (payload) => {
-  analyticsService.logAlert(payload.sessionId, payload.type, payload.message, payload.suggestion);
+  analyticsService.logAlert(
+    payload.sessionId, payload.type, payload.message, payload.suggestion,
+  );
   io.to(payload.sessionId).emit('engagement:alert', payload);
 });
 
 // ─── START ───────────────────────────────────────────────────────────────────
-const PORT = process.env.PORT || 4000;
+
+const PORT = parseInt(process.env.PORT || '4000', 10);
 server.listen(PORT, () => console.log(`[EngageX] Server ready on :${PORT}`));
 
 module.exports = { app, io };
