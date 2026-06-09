@@ -1,36 +1,50 @@
-import io
+import os
 import logging
 import tempfile
-import os
 from typing import Optional
+
+from groq import Groq
 
 logger = logging.getLogger('engagex.whisper')
 
-try:
-    from faster_whisper import WhisperModel
-    _model = WhisperModel('tiny', device='cpu', compute_type='int8')
-    WHISPER_AVAILABLE = True
-except ImportError:
-    WHISPER_AVAILABLE = False
-    _model = None
-    logger.warning('faster-whisper not installed — transcription unavailable')
+_client: Optional[Groq] = None
+
+
+def _get_client() -> Groq:
+    global _client
+    if _client is None:
+        api_key = os.getenv('GROQ_API_KEY', '')
+        if not api_key:
+            raise RuntimeError('GROQ_API_KEY is not set')
+        _client = Groq(api_key=api_key)
+    return _client
 
 
 def transcribe_audio(audio_bytes: bytes, language: str = 'en') -> Optional[str]:
-    if not WHISPER_AVAILABLE or not _model:
-        return None
+    tmp_path: Optional[str] = None
     try:
-        with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
             tmp.write(audio_bytes)
             tmp_path = tmp.name
-        segments, _ = _model.transcribe(tmp_path, language=language, beam_size=1)
-        transcript  = ' '.join(seg.text.strip() for seg in segments)
-        return transcript.strip() or None
-    except Exception as e:
-        logger.error(f'transcribe_audio: {e}')
+
+        with open(tmp_path, 'rb') as audio_file:
+            result = _get_client().audio.transcriptions.create(
+                file=('audio.wav', audio_file, 'audio/wav'),
+                model='whisper-large-v3',
+                response_format='text',
+                language=language,
+            )
+
+        transcript = result.strip() if isinstance(result, str) else str(result).strip()
+        return transcript or None
+
+    except Exception as exc:
+        logger.error('transcribe_audio failed: %s', exc)
         return None
+
     finally:
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass

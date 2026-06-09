@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from routers import sessions, signals, aggregation, quiz, report, demo
+from routers.quiz_pdf import router as quiz_pdf_router
 from services.whisper_router import router as whisper_router
 from socket_manager import sio
 from services.polling_service import polling_loop
@@ -17,6 +18,7 @@ load_dotenv()
 ALLOWED_ORIGINS = os.getenv('CORS_ORIGINS', '*')
 if ALLOWED_ORIGINS != '*':
     ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS.split(',') if o.strip()]
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -55,13 +57,14 @@ else:
         allow_headers=['*'],
     )
 
-fastapi_app.include_router(sessions.router,    prefix='/api/sessions',   tags=['Sessions'])
-fastapi_app.include_router(signals.router,     prefix='/api/signals',    tags=['Signals'])
-fastapi_app.include_router(aggregation.router, prefix='/api/aggregate',  tags=['Aggregation'])
-fastapi_app.include_router(quiz.router,        prefix='/api/quiz',       tags=['Quiz'])
-fastapi_app.include_router(report.router,      prefix='/api/report',     tags=['Report'])
-fastapi_app.include_router(demo.router,        prefix='/api/demo',       tags=['Demo'])
-fastapi_app.include_router(whisper_router,     prefix='/api/whisper',    tags=['Whisper'])
+fastapi_app.include_router(sessions.router,     prefix='/api/sessions',   tags=['Sessions'])
+fastapi_app.include_router(signals.router,      prefix='/api/signals',    tags=['Signals'])
+fastapi_app.include_router(aggregation.router,  prefix='/api/aggregate',  tags=['Aggregation'])
+fastapi_app.include_router(quiz.router,         prefix='/api/quiz',       tags=['Quiz'])
+fastapi_app.include_router(quiz_pdf_router,     prefix='/api/quiz',       tags=['Quiz PDF'])
+fastapi_app.include_router(report.router,       prefix='/api/report',     tags=['Report'])
+fastapi_app.include_router(demo.router,         prefix='/api/demo',       tags=['Demo'])
+fastapi_app.include_router(whisper_router,      prefix='/api/whisper',    tags=['Whisper'])
 
 
 @fastapi_app.get('/health', tags=['Health'])
