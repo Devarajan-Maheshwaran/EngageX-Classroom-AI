@@ -12,6 +12,8 @@ def _get_llm():
 
 
 def run_quiz_crew(topic: str, session_context: str = '') -> dict:
+    if not os.getenv('GROQ_API_KEY'):
+        return _deterministic_quiz(topic)
 
     try:
         from crewai import Agent, Task, Crew, Process

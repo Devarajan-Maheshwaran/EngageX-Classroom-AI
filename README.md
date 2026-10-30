@@ -1,3 +1,28 @@
+# Local demo: start here
+
+This repository is being stabilized as a **local, experimental browser classroom demo**, not a production service or video meeting. See [the product spec and acceptance checklist](docs/demo-spec.md) for verified scope and limitations.
+
+Prerequisites: Node 20.19+ or 22.12+ (Node 22 recommended), npm, Python 3.10+ for the optional service, and a C++ build toolchain if SQLite needs to compile. From the repository root:
+
+```bash
+(cd backend && npm ci --omit=optional)
+(cd frontend && npm ci)
+# Optional: topic/PDF starter service (no model key needed)
+python3 -m venv backend/.venv
+backend/.venv/bin/pip install -r backend/requirements-demo.txt
+WITH_PYTHON=1 bash scripts/dev-local.sh
+# Or run just the room, with manual quiz and topic starter fallback:
+# bash scripts/dev-local.sh
+```
+
+Open http://localhost:5173, create a room, and open a second browser/tab to join with the code. To serve the built frontend on the Node port instead, run `npm run build --prefix frontend` before starting the backend, then open http://localhost:4000. The teacher selects **Manual** in the AI panel, builds a question, reviews it and launches it. Three student messages such as “I am confused” trigger a rule-based alert. End the room to see the saved recap. Run the integration test with `npm test --prefix backend`.
+
+The Vite dev server proxies Node and Python requests; do not set frontend URLs to localhost when accessing it from another device. `WITH_PYTHON=1` requires the lightweight dependencies above. Without a configured AI provider, generated questions are labelled starters for teacher review. Experimental vision and audio are off by default and require explicit opt-in; they are not part of the verified room flow. For optional model downloads set `ENABLE_LOCAL_MODELS=true` and install optional Node dependencies. Do not share sensitive data or expose this setup to the internet: authentication, protected reports and production hardening are not implemented.
+
+The older overview below documents prototype features and deployment ideas; where it conflicts with this section or the demo spec, the latter are authoritative.
+
+---
+
 # EngageX Classroom AI
 
 > Real-time AI engagement layer for live teaching sessions.

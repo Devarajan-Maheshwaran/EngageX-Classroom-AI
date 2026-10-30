@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 
-const PYTHON_URL = import.meta.env.VITE_PYTHON_BACKEND_URL || 'http://localhost:4001';
+const PYTHON_URL = import.meta.env.VITE_PYTHON_BACKEND_URL || '/python';
 const CHUNK_INTERVAL = 5000;
 
 export function useAudioCapture({ sessionId, studentId, studentName, enabled, onTranscript }) {

@@ -29,7 +29,7 @@ export default function HostDashboard() {
     endSession();
     setIsSummaryOpen(true);
     try {
-      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/session/${sessionId}/summary`);
+      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL || ''}/api/session/${sessionId}/summary`);
       if (res.ok) {
         const data = await res.json();
         setSummaryData(data);
@@ -41,14 +41,14 @@ export default function HostDashboard() {
 
   const handleDownloadPdf = async () => {
     try {
-      const res = await fetch(`${import.meta.env.VITE_PYTHON_BACKEND_URL || 'http://localhost:4001'}/api/report/generate-pdf/${sessionId}`, { method: 'POST' });
+      const res = await fetch(`${import.meta.env.VITE_PYTHON_BACKEND_URL || '/python'}/api/report/generate-pdf/${sessionId}`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         if (data.reports && data.reports.length > 0) {
           // Trigger download of the first report or a combined report
           // Note: In real app, you might download a zip or multiple. Let's just download the first one.
           const studentId = data.reports[0].student_id;
-          window.open(`${import.meta.env.VITE_PYTHON_BACKEND_URL || 'http://localhost:4001'}/api/report/pdf/${sessionId}/${studentId}`, '_blank');
+          window.open(`${import.meta.env.VITE_PYTHON_BACKEND_URL || '/python'}/api/report/pdf/${sessionId}/${studentId}`, '_blank');
         }
       }
     } catch (err) {

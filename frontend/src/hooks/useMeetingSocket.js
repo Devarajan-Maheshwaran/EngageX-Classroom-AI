@@ -9,8 +9,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
-const PYTHON_URL = import.meta.env.VITE_PYTHON_BACKEND_URL || 'http://localhost:4001';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
+const PYTHON_URL = import.meta.env.VITE_PYTHON_BACKEND_URL || '/python';
 
 export function useMeetingSocket({ role, sessionId, name }) {
   const [participants, setParticipants] = useState([]);
@@ -21,19 +21,25 @@ export function useMeetingSocket({ role, sessionId, name }) {
   const [currentQuiz, setCurrentQuiz]   = useState(null);
   const [visionUpdates, setVisionUpdates] = useState({});
   const [socketId, setSocketId] = useState(null);
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [quizResult, setQuizResult] = useState(null);
   const socketRef = useRef(null);
 
   useEffect(() => {
     if (!sessionId || !role) return;
 
+    const identityKey = `participant:${sessionId}`;
+    let participantId = sessionStorage.getItem(identityKey);
+    if (!participantId) { participantId = crypto.randomUUID(); sessionStorage.setItem(identityKey, participantId); }
     const socket = io(BACKEND_URL, {
+      auth: { hostToken: sessionStorage.getItem(`host:${sessionId}`), participantId },
       query:             { role, sessionId, name: name || 'Anonymous' },
       reconnectionDelay: 1000,
       reconnectionAttempts: 5,
     });
     socketRef.current = socket;
 
-    socket.on('connect',    () => { setConnected(true); setSocketId(socket.id); });
+    socket.on('connect',    () => { setConnected(true); setSocketId(participantId); });
     socket.on('disconnect', () => setConnected(false));
 
     // Full participant snapshot (every 10s + on join)
@@ -73,7 +79,7 @@ export function useMeetingSocket({ role, sessionId, name }) {
 
     // Error events from Phase 4B server guards
     socket.on('error:session', ({ message }) => setSessionError(message));
-    socket.on('error:auth',    ({ message }) => console.warn('[Socket] Auth error:', message));
+    socket.on('error:auth',    ({ message }) => setSessionError(message));
     socket.on('error:message', ({ message }) => console.warn('[Socket] Msg error:', message));
 
     // Session ended by host
@@ -83,7 +89,10 @@ export function useMeetingSocket({ role, sessionId, name }) {
     });
 
     // Quiz events
+    socket.on('leaderboard:update', setLeaderboard);
+    socket.on('quiz:ended', (result) => { setQuizResult(result); setCurrentQuiz(null); });
     socket.on('quiz_start', (quiz) => {
+      setQuizResult(null);
       setCurrentQuiz(quiz);
     });
 
@@ -116,19 +125,18 @@ export function useMeetingSocket({ role, sessionId, name }) {
     }
   }, []);
 
-  const sendQuizResponse = useCallback((quizId, answerId, answerText) => {
-    fetch(`${PYTHON_URL}/api/quiz/respond`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        quiz_id: quizId,
-        session_id: sessionId,
-        student_id: socketRef.current?.id,
-        answer_id: answerId,
-        answer_text: answerText,
-      }),
+  const sendQuizResponse = useCallback((quizId, answerId) => {
+    socketRef.current?.emit('student:quiz_response', {quizId, answerId}, (result) => {
+      if (result?.error) setSessionError(result.error);
     });
-  }, [sessionId]);
+  }, []);
+  const launchQuiz = useCallback((quiz) => new Promise((resolve, reject) => {
+    if (!socketRef.current?.connected) return reject(new Error('Not connected'));
+    socketRef.current.timeout(5000).emit('quiz:launch', quiz, (err, result) => {
+      if (err || result?.error) reject(new Error(result?.error || 'Quiz launch timed out'));
+      else resolve(result);
+    });
+  }), []);
 
   // Compute room mood from last 10 sentiments (mirrors backend getRoomMood logic)
   const roomMood = (() => {
@@ -147,6 +155,9 @@ export function useMeetingSocket({ role, sessionId, name }) {
 
   return {
     participants,
+    leaderboard,
+    quizResult,
+    launchQuiz,
     alerts,
     sentiments,
     connected,

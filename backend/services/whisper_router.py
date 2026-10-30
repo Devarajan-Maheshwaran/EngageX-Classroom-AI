@@ -2,11 +2,11 @@ import logging
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from services.whisper_service      import transcribe_audio
 from services.vocal_emotion_service import extract_vocal_features, score_from_vocal
-from services.supabase_service     import SupabaseService
+import db.py_store as _svc
 
 router = APIRouter()
 logger = logging.getLogger('engagex.whisper_router')
-_svc   = SupabaseService()
+
 
 
 @router.post('/transcribe')

@@ -19,7 +19,7 @@ import { SpotlightCard }    from '../components/reactbits/SpotlightCard';
 import { BlurText }         from '../components/reactbits/BlurText';
 import { LogoLoop }         from '../components/reactbits/LogoLoop';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
 
 // ─── data ────────────────────────────────────────────────────────────────────
 
@@ -119,6 +119,7 @@ export default function Home() {
       const res  = await fetch(`${BACKEND_URL}/api/session/create`, { method: 'POST' });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const data = await res.json();
+      sessionStorage.setItem(`host:${data.sessionId}`, data.hostToken);
       navigate(`/room?sessionId=${data.sessionId}&role=teacher&name=Teacher`);
     } catch (err) {
       setError(err.message.includes('fetch') ? 'Could not reach the server. Is the backend running?' : err.message);

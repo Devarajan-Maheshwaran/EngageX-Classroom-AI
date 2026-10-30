@@ -36,14 +36,9 @@ function runCycle(sessionId) {
   const silent  = all.filter((p) => p.messageCount === 0).map((p) => p.name);
   const preview = silent.slice(0, 5).join(', ') + (silent.length > 5 ? ` +${silent.length - 5} more` : '');
 
-  bus.publish(bus.EVENTS.ENGAGEMENT_ALERT, {
-    sessionId,
-    type:    'PARTICIPATION_IMBALANCE',
-    ratio,
-    message: `Only ${active.length}/${all.length} participants have spoken. Silent: ${preview}`,
-  });
 
-  return { ratio, triggered: true };
+
+  return { ratio, triggered: true, message: `Only ${active.length}/${all.length} participants have spoken. Silent: ${preview}` };
 }
 
 module.exports = { runCycle, IMBALANCE_THRESHOLD };

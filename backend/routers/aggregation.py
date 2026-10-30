@@ -1,13 +1,13 @@
 import logging
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
-from services.supabase_service import SupabaseService
+import db.py_store as _svc
 from agents.signal_aggregator import run_aggregation
 from socket_manager import sio
 
 router = APIRouter()
 logger = logging.getLogger('engagex.aggregation')
-_svc   = SupabaseService()
+
 
 
 class AggregateRequest(BaseModel):

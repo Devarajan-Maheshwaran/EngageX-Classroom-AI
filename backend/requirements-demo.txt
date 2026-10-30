@@ -1,0 +1,8 @@
+# Lightweight optional Python service. For real LLM generation install langchain-groq and crewai too.
+fastapi>=0.111,<1
+uvicorn[standard]>=0.29,<1
+python-socketio>=5.11,<6
+python-multipart>=0.0.9,<1
+python-dotenv>=1,<2
+httpx>=0.27,<1
+pdfplumber>=0.10,<1

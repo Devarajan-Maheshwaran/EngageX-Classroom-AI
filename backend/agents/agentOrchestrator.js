@@ -55,7 +55,10 @@ async function monitorNode(state) {
 }
 
 async function classifyNode(state) {
-  if (state.alertFired && state.alertType) markFired(state.sessionId, state.alertType);
+  if (state.alertFired && state.alertType) {
+    markFired(state.sessionId, state.alertType);
+    bus.publish(bus.EVENTS.ENGAGEMENT_ALERT, { sessionId: state.sessionId, type: state.alertType, message: `${state.silentCount} participant(s) have not sent a message recently: ${state.silentNames.join(', ')}` });
+  }
   return {};
 }
 
@@ -63,7 +66,10 @@ async function balanceNode(state) {
   if (state.cycleCount % BALANCER_EVERY_N !== 0) return { balancerTriggered: false };
   const result = balancerAgent.runCycle(state.sessionId);
   const canFireBalance = result.triggered && canFire(state.sessionId, 'PARTICIPATION_IMBALANCE');
-  if (canFireBalance) markFired(state.sessionId, 'PARTICIPATION_IMBALANCE');
+  if (canFireBalance) {
+    markFired(state.sessionId, 'PARTICIPATION_IMBALANCE');
+    bus.publish(bus.EVENTS.ENGAGEMENT_ALERT, {sessionId: state.sessionId, type: 'PARTICIPATION_IMBALANCE', message: result.message});
+  }
   return { balancerTriggered: canFireBalance, participationRatio: result.ratio };
 }
 
@@ -117,12 +123,14 @@ function initialState(sessionId) {
 
 async function invokeCycle(sessionId) {
   const ctx = sessions.get(sessionId);
-  if (!ctx || ctx.state.ended) return;
+  if (!ctx || ctx.state.ended || ctx.running) return;
+  ctx.running = true;
   try {
-    ctx.state = await compiledGraph.invoke(ctx.state);
+    const next = await compiledGraph.invoke(ctx.state);
+    if (!ctx.state.ended) ctx.state = next;
   } catch (err) {
     console.error(`[Orchestrator] Cycle failed for ${sessionId}:`, err.message);
-  }
+  } finally { ctx.running = false; }
 }
 
 function startSession(sessionId) {

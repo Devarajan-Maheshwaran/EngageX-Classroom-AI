@@ -122,8 +122,8 @@ function getStaticSuggestion(type) {
 // Mutates payload.suggestion in place — always present by the time frontend receives it.
 // Also marks whether suggestion was AI-generated (used in AlertFeed Phase 5A badge).
 
-bus.subscribe(bus.EVENTS.ENGAGEMENT_ALERT, async (payload) => {
-  const aiSuggestion = await fetchGroqSuggestion(payload.type, payload.message);
+bus.subscribe(bus.EVENTS.ENGAGEMENT_ALERT, (payload) => {
+  const aiSuggestion = null;
 
   payload.suggestion    = aiSuggestion || getStaticSuggestion(payload.type);
   payload.suggestionAI  = Boolean(aiSuggestion); // true = Groq-generated, false = static
