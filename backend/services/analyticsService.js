@@ -88,5 +88,6 @@ module.exports = {
   logAlert,
   logCycle,
   getSlidingWindow,
+  getRecentWindow: (sessionId, size) => getSlidingWindow(sessionId).slice(-size),
   getSessionReport,
 };

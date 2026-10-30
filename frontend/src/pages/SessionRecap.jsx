@@ -25,8 +25,8 @@ import {
   AlertCircle, Trophy,
 } from 'lucide-react';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
-const PYTHON_URL = import.meta.env.VITE_PYTHON_BACKEND_URL || 'http://localhost:4001';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
+const PYTHON_URL = import.meta.env.VITE_PYTHON_BACKEND_URL || '/python';
 
 // ─── Intent icon map ────────────────────────────────────────────────────────
 const INTENT_ICON = {
@@ -95,7 +95,7 @@ function ParticipantTable({ students }) {
         </thead>
         <tbody>
           {sorted.map((s, i) => {
-            const intent = s.lastIntentLabel || 'engaged';
+            const intent = s.lastIntentLabel || 'unknown';
             const icfg   = INTENT_ICON[intent] || INTENT_ICON.engaged;
             const IntentIcon = icfg.Icon;
             return (
@@ -113,7 +113,7 @@ function ParticipantTable({ students }) {
                     : s.participationScore >= 40 ? 'text-yellow-400'
                     : 'text-rose-400'
                   }`}>
-                    {s.participationScore ?? 0}
+                    {s.participationScore ?? '—'}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-slate-300">{s.messageCount ?? 0}</td>
@@ -147,7 +147,7 @@ function SentimentHeatmap({ sentimentLog }) {
     const key = `${minBucket}m`;
     if (!buckets[key]) buckets[key] = { name: key, positive: 0, negative: 0 };
     if (label === 'POSITIVE') buckets[key].positive++;
-    else buckets[key].negative++;
+    else if (label === 'NEGATIVE') buckets[key].negative++;
   });
 
   const data = Object.values(buckets);
@@ -280,13 +280,14 @@ export default function SessionRecap() {
     students       = [],
     sentimentLog   = [],
     alertLog       = [],
+    leaderboard    = [],
   } = report || {};
 
   const duration  = startedAt && endedAt ? endedAt - startedAt : null;
   const posCount  = sentimentLog.filter((s) => s.label === 'POSITIVE').length;
-  const negCount  = sentimentLog.length - posCount;
+  const negCount  = sentimentLog.filter((s) => s.label === 'NEGATIVE').length;
   const posRatio  = sentimentLog.length ? Math.round((posCount / sentimentLog.length) * 100) : 0;
-  const topStudent = [...students].sort((a, b) => (b.participationScore ?? 0) - (a.participationScore ?? 0))[0];
+  const topStudent = leaderboard[0];
 
   return (
     <div className="min-h-screen bg-bg">
@@ -324,7 +325,7 @@ export default function SessionRecap() {
           <StatCard Icon={TrendingDown} label="Negative messages" value={`${negCount} (${100 - posRatio}%)`}     color="text-rose-400" />
           {topStudent && (
             <StatCard Icon={Trophy} label="Top participant" value={topStudent.name}
-              sub={`Score: ${topStudent.participationScore}`} color="text-yellow-400" />
+              sub={`Quiz points: ${topStudent.score}`} color="text-yellow-400" />
           )}
         </div>
 
@@ -336,6 +337,7 @@ export default function SessionRecap() {
           </div>
         </section>
 
+        {leaderboard.length > 0 && <section><h2 className="text-xs font-semibold text-slate-400 uppercase mb-3">Quiz leaderboard</h2><div className="bg-white/5 rounded-xl p-4">{leaderboard.map((entry, i) => <p key={entry.studentId} className="text-white py-1">{i + 1}. {entry.name} — {entry.score} points</p>)}</div></section>}
         {/* ── Participant breakdown ──────────────────────────────── */}
         <section>
           <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Participant breakdown</h2>

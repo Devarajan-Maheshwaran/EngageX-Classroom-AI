@@ -29,7 +29,7 @@ function getOrCreateSession(sessionId) {
 function registerStudent(sessionId, socketId, name) {
   const session  = getOrCreateSession(sessionId);
   const indexKey = `${sessionId}:${name.toLowerCase().trim()}`;
-  const existingSocketId = nameIndex.get(indexKey);
+  const existingSocketId = session.has(socketId) ? socketId : null;
 
   if (existingSocketId && session.has(existingSocketId)) {
     // Reconnect: migrate the existing record to the new socketId

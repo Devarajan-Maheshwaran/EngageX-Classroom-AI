@@ -5,7 +5,7 @@ import QuizModal from '../QuizModal';
 import QuizBuilder from '../QuizBuilder';
 import PDFQuizUploader from '../PDFQuizUploader';
 
-const PYTHON_URL = import.meta.env.VITE_PYTHON_BACKEND_URL || 'http://localhost:4001';
+const PYTHON_URL = import.meta.env.VITE_PYTHON_BACKEND_URL || '/python';
 
 const QUIZ_TABS = [
   { id: 'ai',     label: 'AI Generate' },
@@ -27,6 +27,8 @@ export default function AIInsightPanel({
   onEndSession,
   onClose,
   quizResponseCount,
+  leaderboard = [],
+  launchQuiz: sendQuiz,
 }) {
   const [topic,        setTopic]        = useState('');
   const [pendingQuiz,  setPendingQuiz]  = useState(null);
@@ -67,28 +69,22 @@ export default function AIInsightPanel({
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setPendingQuiz({ ...data, duration_s: 30 });
+      if (data.explanation?.toLowerCase().includes('placeholder')) setQuizError('AI is not configured: edit the placeholder before launching.');
     } catch (err) {
-      setQuizError(err.message || 'Could not generate quiz.');
+      // An explicitly labelled starter, not a claim of generated subject knowledge.
+      setPendingQuiz({
+        question: `Which topic are we discussing today?`,
+        options: [{id:'a', text:cleanTopic}, {id:'b', text:'An unrelated topic'}, {id:'c', text:'A different lesson'}, {id:'d', text:'None of these'}],
+        correct_id: 'a', duration_s: 30,
+      });
+      setQuizError('AI service unavailable: a simple starter question was created. Edit it before launching.');
     } finally {
       setQuizLoading(false);
     }
   }
 
   async function launchQuiz(quiz) {
-    const res = await fetch(`${PYTHON_URL}/api/quiz/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: sessionId,
-        teacher_id: 'teacher',
-        question:   quiz.question,
-        quiz_type:  'mcq',
-        options:    quiz.options,
-        correct_id: quiz.correct_id,
-        duration_s: quiz.duration_s || 30,
-      }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await sendQuiz(quiz);
     setPendingQuiz(null);
     setTopic('');
   }
@@ -174,6 +170,10 @@ export default function AIInsightPanel({
           <AlertFeed alerts={alerts} />
         </section>
 
+        <section className="p-4 border-b border-white/10">
+          <p className="text-xs font-semibold text-slate-400 uppercase mb-3">Live leaderboard</p>
+          {leaderboard.length ? leaderboard.map((entry, index) => <p key={entry.studentId} className="text-sm text-white py-1">{index + 1}. {entry.name} <span className="float-right">{entry.score} points</span></p>) : <p className="text-sm text-slate-500">Scores appear after quiz answers.</p>}
+        </section>
         {/* Quiz section — 3 tabs */}
         <section className="p-4">
           <div className="flex items-center gap-2 mb-3">

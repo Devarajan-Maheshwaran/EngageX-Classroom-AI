@@ -28,16 +28,6 @@ function runCycle(sessionId) {
   const all    = participationService.getSnapshot(sessionId);
   const silent = all.filter((p) => p.silentDurationMs > SILENT_THRESHOLD_MS);
 
-  if (silent.length > 0) {
-    const names = silent.map((p) => p.name).join(', ');
-    bus.publish(bus.EVENTS.ENGAGEMENT_ALERT, {
-      sessionId,
-      type:     'SILENT_PARTICIPANTS',
-      count:    silent.length,
-      students: silent.map((p) => ({ id: p.studentId, name: p.name, silentMs: p.silentDurationMs })),
-      message:  `${silent.length} participant(s) silent for ${SILENT_THRESHOLD_MS / 60000}+ min: ${names}`,
-    });
-  }
 
   return {
     silentCount: silent.length,

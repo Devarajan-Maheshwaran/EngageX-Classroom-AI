@@ -3,19 +3,20 @@ import logging
 import tempfile
 from typing import Optional
 
-from groq import Groq
+from typing import Any
 
 logger = logging.getLogger('engagex.whisper')
 
-_client: Optional[Groq] = None
+_client: Optional[Any] = None
 
 
-def _get_client() -> Groq:
+def _get_client() -> Any:
     global _client
     if _client is None:
         api_key = os.getenv('GROQ_API_KEY', '')
         if not api_key:
             raise RuntimeError('GROQ_API_KEY is not set')
+        from groq import Groq
         _client = Groq(api_key=api_key)
     return _client
 

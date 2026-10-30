@@ -37,14 +37,18 @@ export default function MeetingRoom() {
   const name = searchParams.get('name') || (role === 'teacher' ? 'Teacher' : 'Student');
   const isTeacher = role === 'teacher';
 
-  const [isMuted, setIsMuted] = useState(false);
-  const [isCameraOff, setIsCameraOff] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
+  const [isCameraOff, setIsCameraOff] = useState(true);
   const [panel, setPanel] = useState(isTeacher ? 'ai' : null);
   const [showSummary, setShowSummary] = useState(false);
+  const [signalConsent, setSignalConsent] = useState(false);
   const localVideoRef = useRef(null);
 
   const {
     participants,
+    leaderboard,
+    quizResult,
+    launchQuiz,
     alerts,
     sentiments,
     connected,
@@ -86,18 +90,18 @@ export default function MeetingRoom() {
     studentId: localStudentId,
     studentName: name,
     videoRef: localVideoRef,
-    enabled: !isTeacher && !isCameraOff && connected,
+    enabled: signalConsent && !isTeacher && !isCameraOff && connected,
   });
 
   useAudioCapture({
     sessionId,
     studentId: localStudentId,
     studentName: name,
-    enabled: !isTeacher && !isMuted && connected,
+    enabled: signalConsent && !isTeacher && !isMuted && connected,
     onTranscript: (text) => sendMessage(text),
   });
 
-  const enrichedParticipants = participants.map((participant) => {
+  const enrichedParticipants = participants.filter((participant) => isTeacher || participant.studentId !== socketId).map((participant) => {
     const lastSentiment = [...sentiments].reverse().find((item) => item.participantId === participant.studentId);
     const vision = visionUpdates[participant.studentId];
     const engagementScore = vision?.engagement_score ?? (lastSentiment ? sentimentToScore(lastSentiment) : participant.participationScore ?? null);
@@ -164,10 +168,12 @@ export default function MeetingRoom() {
           participantCount={allParticipants.length}
         />
 
+        {!isTeacher && <label className="bg-slate-900 px-4 py-2 text-xs text-slate-300 flex gap-2 items-center"><input type="checkbox" checked={signalConsent} onChange={e => setSignalConsent(e.target.checked)} /> Opt in to experimental camera and microphone analysis (requires Python service). Signals are estimates, not emotional facts.</label>}
         <div className="flex flex-1 overflow-hidden">
           <div className="flex-1 flex flex-col overflow-hidden relative">
             <VideoGrid participants={allParticipants} localVideoRef={localVideoRef} />
 
+            {!isTeacher && (leaderboard.length > 0 || quizResult) && !currentQuiz && <div className="absolute bottom-4 left-4 bg-slate-900 p-4 rounded-xl text-sm z-20">{quizResult && `Correct answer: ${quizResult.correct_id?.toUpperCase()} · `}Leaderboard: {leaderboard.map(p => `${p.name} ${p.score}`).join(', ') || 'No answers'}</div>}
             {!isTeacher && currentQuiz && (
               <QuizOverlay
                 quiz={currentQuiz}
@@ -179,6 +185,7 @@ export default function MeetingRoom() {
             )}
           </div>
 
+          {sessionError && sessionError !== 'Session has ended.' && <div role="alert" className="absolute top-16 left-4 z-50 bg-red-900 p-3 rounded">{sessionError}</div>}
           {panel === 'chat' && (
             <ChatPanel sentiments={sentiments} onSend={sendMessage} onClose={() => setPanel(null)} />
           )}
@@ -191,6 +198,8 @@ export default function MeetingRoom() {
               alerts={alerts}
               roomMood={roomMood}
               sessionId={sessionId}
+              leaderboard={leaderboard}
+              launchQuiz={launchQuiz}
               onClose={() => setPanel(null)}
               onEndSession={() => {
                 endSession();

@@ -42,6 +42,11 @@ async function classifyIntent(text) {
     return { label: 'engaged', score: 0.5, allScores: {} };
   }
 
+  if (process.env.ENABLE_LOCAL_MODELS !== 'true') {
+    const t = text.toLowerCase();
+    const label = /confus|don.t understand|not understand|unclear|lost|help me/.test(t) ? 'confused' : /frustrat|annoy/.test(t) ? 'frustrated' : /excit|awesome|great/.test(t) ? 'excited' : /boring|bored/.test(t) ? 'bored' : 'engaged';
+    return { label, score: 0.7, allScores: {}, source: 'rules' };
+  }
   try {
     await loadModel();
     const result = await classifier(text.trim(), CANDIDATE_LABELS, {
@@ -61,7 +66,9 @@ async function classifyIntent(text) {
     };
   } catch (err) {
     console.error('[ClassifierService] Inference error:', err.message);
-    return { label: 'engaged', score: 0.5, allScores: {} };
+    const t = text.toLowerCase();
+    const label = /confus|don.t understand|not understand|unclear|lost|help me/.test(t) ? 'confused' : 'engaged';
+    return { label, score: 0.7, allScores: {}, source: 'rules' };
   }
 }
 

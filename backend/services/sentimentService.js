@@ -33,6 +33,10 @@ async function analyzeSentiment(text) {
   if (!text || text.trim().length === 0) {
     return { label: 'POSITIVE', score: 0.5 };
   }
+  if (process.env.ENABLE_LOCAL_MODELS !== 'true') {
+    const label = /confus|frustrat|bad|unclear|lost/.test(text.toLowerCase()) ? 'NEGATIVE' : /great|good|awesome|thanks|excit/.test(text.toLowerCase()) ? 'POSITIVE' : 'NEUTRAL';
+    return { label, score: 0.7, source: 'rules' };
+  }
   try {
     await loadModel();
     const [result] = await classifier(text.trim(), { topk: 1 });

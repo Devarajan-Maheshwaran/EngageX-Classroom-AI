@@ -1,11 +1,11 @@
 import asyncio
 import logging
-from services.supabase_service import SupabaseService
+import db.py_store as _svc
 from agents.signal_aggregator import run_aggregation
 from socket_manager import sio
 
 logger = logging.getLogger('engagex.polling')
-_svc   = SupabaseService()
+
 
 POLL_INTERVAL = 10
 

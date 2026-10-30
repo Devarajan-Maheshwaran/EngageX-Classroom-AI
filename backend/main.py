@@ -6,14 +6,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
+load_dotenv()
+
 from routers import sessions, signals, aggregation, quiz, report, demo
 from routers.quiz_pdf import router as quiz_pdf_router
 from services.whisper_router import router as whisper_router
 from socket_manager import sio
 from services.polling_service import polling_loop
 from middleware.rate_limiter import RateLimitMiddleware
-
-load_dotenv()
 
 ALLOWED_ORIGINS = os.getenv('CORS_ORIGINS', '*')
 if ALLOWED_ORIGINS != '*':

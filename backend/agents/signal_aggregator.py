@@ -37,7 +37,7 @@ def classify_alert(score: float) -> Optional[str]:
 
 
 def build_alert_message(score: float, signals: list[dict], student_name: str) -> str:
-    if GROQ_API_KEY:
+    if os.getenv('GROQ_API_KEY'):
         return _groq_message(score, signals, student_name)
     return _deterministic_message(score, signals, student_name)
 

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { Upload, Loader2, FileText, Rocket } from 'lucide-react';
 
-const PYTHON_URL = import.meta.env.VITE_PYTHON_BACKEND_URL || 'http://localhost:4001';
+const PYTHON_URL = import.meta.env.VITE_PYTHON_BACKEND_URL || '/python';
 
 export default function PDFQuizUploader({ sessionId, onLaunch }) {
   const fileRef  = useRef(null);
@@ -46,6 +46,7 @@ export default function PDFQuizUploader({ sessionId, onLaunch }) {
 
       const data = await res.json();
       const list = data.questions || [];
+      if (data.source) setError(`${data.source}. Review and edit before launching.`);
 
       if (list.length === 0) {
         setError('No questions were extracted. Try a different PDF.');

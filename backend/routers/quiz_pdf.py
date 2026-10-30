@@ -47,7 +47,9 @@ async def quiz_from_pdf(
 
     tmp_path: Optional[str] = None
     try:
-        contents = await file.read()
+        contents = await file.read(5 * 1024 * 1024 + 1)
+        if len(contents) > 5 * 1024 * 1024:
+            raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail='PDF must be 5 MB or smaller')
         with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
             tmp.write(contents)
             tmp_path = tmp.name
@@ -59,6 +61,16 @@ async def quiz_from_pdf(
                 detail='Could not extract readable text from the PDF',
             )
 
+        if not os.getenv('GROQ_API_KEY'):
+            # Clearly labelled extraction check; never fabricate a subject-matter answer.
+            import re
+            sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text.replace('\n', ' ')) if len(s.strip()) >= 20]
+            excerpt = (sentences[0] if sentences else text)[:240]
+            return {'session_id': session_id, 'source': 'extractive starter — review before launch', 'questions': [{
+                'question': 'Which excerpt appears in the uploaded material?',
+                'options': [{'id': 'a', 'text': excerpt}, {'id': 'b', 'text': 'This document contains no readable text.'}, {'id': 'c', 'text': 'No document was uploaded.'}, {'id': 'd', 'text': 'None of the above.'}],
+                'correct_id': 'a', 'explanation': 'Extracted directly from the uploaded PDF; review and edit this starter.'
+            }]}
         llm = get_llm(temperature=0.3, max_tokens=2048)
         response = llm.invoke(_build_prompt(text))
         raw = response.content if hasattr(response, 'content') else str(response)

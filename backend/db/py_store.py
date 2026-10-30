@@ -3,12 +3,17 @@ import os
 import json
 from typing import Optional
 
-DB_PATH = os.path.join(os.path.dirname(__file__), '../data/engagex.db')
+DB_PATH = os.getenv('ENGAGEX_DB_PATH', os.path.join(os.path.dirname(__file__), '../data/engagex.db'))
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+def get_active_sessions() -> list:
+    with get_db() as db:
+        ids = [row['id'] for row in db.execute("SELECT id FROM sessions WHERE status = 'active'")]
+    return [state for sid in ids if (state := get_session_state(sid))]
 
 def get_session_state(session_id: str) -> Optional[dict]:
     with get_db() as db:
@@ -34,11 +39,11 @@ def get_recent_signals(session_id: str, student_id: str, limit: int = 10) -> lis
             FROM text_signals WHERE session_id = ? AND student_id = ?
             UNION ALL
             SELECT id, session_id, student_id, ts as created_at, 'audio' as signal_type,
-                   engagement_score, transcript as text, vocal_emotion as emotion, NULL as sentiment_score, NULL as intent, NULL as intent_score
+                   engagement_score, transcript as text, vocal_emotion as sentiment, NULL as sentiment_score, NULL as intent, NULL as intent_score
             FROM audio_signals WHERE session_id = ? AND student_id = ?
             UNION ALL
             SELECT id, session_id, student_id, ts as created_at, 'vision' as signal_type,
-                   engagement_score, dominant_emotion as emotion, NULL as sentiment_score, NULL as intent, NULL as intent_score, looking_away
+                   engagement_score, NULL as text, dominant_emotion as sentiment, NULL as sentiment_score, NULL as intent, NULL as intent_score
             FROM vision_signals WHERE session_id = ? AND student_id = ?
             ORDER BY created_at DESC LIMIT ?
         '''
